@@ -6,6 +6,55 @@ embeddable as an iframe inside Zabbix, with full JumpServer-style feature
 parity on the roadmap. v1 (the JumpServer-fork-based build) remains
 available separately on `release/v1.0`.
 
+## Quick Deploy
+
+Pulls prebuilt images from Docker Hub (`docker.io/karthickdk02/seyalrun-*`) —
+no source checkout, no local build required.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/karthick-dkk/seyalrun_zabbix/main/install.sh | bash
+```
+
+This installs into `./seyalrun`, generates a `.env` with random secrets, a
+self-signed TLS cert, brings up a Dockerized Postgres, runs migrations, seeds
+the superadmin account, and starts every service. Takes a few minutes on
+first run (image pulls); safe to re-run (an existing `.env`/cert/database is
+reused, not overwritten).
+
+Every choice has a default and can be overridden by exporting a variable
+before running the command above:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SEYALRUN_DIR` | `./seyalrun` | Where to install |
+| `SEYALRUN_HOST` | auto-detected | Hostname/IP for the TLS cert + `FRONTEND_ORIGIN` |
+| `FRAME_ANCESTORS` | *(none)* | Set to your Zabbix origin to allow iframe embedding |
+| `SEYALRUN_DB_ENGINE` | `postgres` | `postgres` or `mysql` |
+| `SEYALRUN_DB_HOST` | *(unset — uses Dockerized DB)* | Point at an **existing** Postgres/MySQL instead — see below |
+
+**Using your own (local/bare-metal) database instead of the Dockerized
+one** — set `SEYALRUN_DB_HOST` (plus user/password); the installer creates
+the four required databases (`seyalrun_identity`, `seyalrun_inventory`,
+`seyalrun_terminal`, `seyalrun_automation`) and imports the schema on your
+instance instead of starting a database container:
+
+```sh
+SEYALRUN_DB_HOST=192.168.64.8 \
+SEYALRUN_DB_USER=seyalrun \
+SEYALRUN_DB_PASSWORD='<your-db-password>' \
+SEYALRUN_DB_ENGINE=postgres \
+  curl -fsSL https://raw.githubusercontent.com/karthick-dkk/seyalrun_zabbix/main/install.sh | bash
+```
+
+`SEYALRUN_DB_USER` must be able to create databases on that instance.
+`SEYALRUN_DB_PORT` defaults to `5432` (postgres) / `3306` (mysql);
+`SEYALRUN_DB_SSLMODE` defaults to `require`.
+
+Building from source instead (for development, or to modify the code) —
+see [Quickstart](#quickstart) below, which uses `docker compose ... --build`
+against this checkout. The same local-DB setup (`ops/init-db.sh`) is shared
+by both paths.
+
 ## Architecture (Phase 1)
 
 ```
@@ -111,12 +160,15 @@ ops/
      ops/init-db.sh
      ```
 
-     This creates `seyalrun_identity` / `seyalrun_inventory` and imports
-     `schema/<engine>/schema.sql` into both (idempotent, safe to re-run).
+     This creates all four databases (`seyalrun_identity`,
+     `seyalrun_inventory`, `seyalrun_terminal`, `seyalrun_automation`) and
+     imports `schema/<engine>/schema.sql` into identity/inventory
+     (idempotent, safe to re-run) — `terminal`/`automation` have no static
+     schema, their tables come entirely from step 4's Alembic migrations.
 
    - **Dockerized Postgres/MySQL** (no bare-metal DB available): set
      `DB_HOST=postgres` (or `mysql`), then bring up the matching overlay
-     profile — its `docker-entrypoint-initdb.d` scripts create both
+     profile — its `docker-entrypoint-initdb.d` scripts create all four
      databases automatically:
 
      ```sh
@@ -131,12 +183,15 @@ ops/
    # (Dockerized DB): add -f docker-compose.db.yml --profile postgres-db
    ```
 
-4. **Run Alembic migrations** (idempotent — also covered by `ops/init-db.sh`
-   for a fresh DB, but Alembic is the source of truth going forward):
+4. **Run Alembic migrations** for every service (idempotent, safe to re-run
+   — `ops/init-db.sh` only creates the databases and imports the identity/
+   inventory schema; every service's tables come from its own migrations):
 
    ```sh
-   docker compose run --rm --no-deps identity-service python -m alembic upgrade head
-   docker compose run --rm --no-deps inventory-service python -m alembic upgrade head
+   for svc in identity-service inventory-service terminal-service automation-service \
+              recording-service zabbix-integration-service metrics-service; do
+     docker compose run --rm --no-deps "$svc" python -m alembic upgrade head
+   done
    ```
 
 5. **Seed the superadmin user**:

@@ -1,15 +1,18 @@
 #!/bin/bash
-# Creates seyalrun_identity / seyalrun_inventory on the bare-metal
-# Postgres or MySQL configured in .env, and imports the matching
-# schema/<engine>/schema.sql into both (idempotent — CREATE TABLE IF NOT
-# EXISTS, safe to re-run).
+# Creates all four SeyalRun databases (identity, inventory, terminal,
+# automation) on a bare-metal Postgres or MySQL instance configured in .env.
+# identity/inventory additionally get schema/<engine>/schema.sql imported
+# (idempotent — CREATE TABLE IF NOT EXISTS, safe to re-run); terminal/
+# automation have no static schema — their tables are created entirely by
+# each service's own Alembic migrations (run `alembic upgrade head` per
+# service after this script — printed at the end).
 #
 # Usage:
 #   ops/init-db.sh
 #
 # Requires .env (DB_ENGINE, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD,
-# IDENTITY_DB_NAME, INVENTORY_DB_NAME) — see .env.example. DB_USER must be
-# able to create databases on DB_HOST.
+# IDENTITY_DB_NAME, INVENTORY_DB_NAME, TERMINAL_DB_NAME, AUTOMATION_DB_NAME)
+# — see .env.example. DB_USER must be able to create databases on DB_HOST.
 
 set -euo pipefail
 
@@ -29,11 +32,13 @@ fi
 : "${DB_PASSWORD:?DB_PASSWORD must be set in .env}"
 : "${IDENTITY_DB_NAME:?IDENTITY_DB_NAME must be set in .env}"
 : "${INVENTORY_DB_NAME:?INVENTORY_DB_NAME must be set in .env}"
+TERMINAL_DB_NAME="${TERMINAL_DB_NAME:-seyalrun_terminal}"
+AUTOMATION_DB_NAME="${AUTOMATION_DB_NAME:-seyalrun_automation}"
 
 case "$DB_ENGINE" in
   postgres)
     export PGPASSWORD="$DB_PASSWORD"
-    for db in "$IDENTITY_DB_NAME" "$INVENTORY_DB_NAME"; do
+    for db in "$IDENTITY_DB_NAME" "$INVENTORY_DB_NAME" "$TERMINAL_DB_NAME" "$AUTOMATION_DB_NAME"; do
       echo "[*] Ensuring database '$db' exists on ${DB_HOST}:${DB_PORT}..."
       exists=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -tAc \
         "SELECT 1 FROM pg_database WHERE datname = '$db'")
@@ -47,7 +52,7 @@ case "$DB_ENGINE" in
     done
     ;;
   mysql)
-    for db in "$IDENTITY_DB_NAME" "$INVENTORY_DB_NAME"; do
+    for db in "$IDENTITY_DB_NAME" "$INVENTORY_DB_NAME" "$TERMINAL_DB_NAME" "$AUTOMATION_DB_NAME"; do
       echo "[*] Ensuring database '$db' exists on ${DB_HOST}:${DB_PORT}..."
       mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" \
         -e "CREATE DATABASE IF NOT EXISTS \`$db\`"
@@ -63,4 +68,9 @@ case "$DB_ENGINE" in
     ;;
 esac
 
-echo "[✓] Database initialization complete (${IDENTITY_DB_NAME}, ${INVENTORY_DB_NAME} on ${DB_ENGINE})."
+echo "[✓] Databases ready: ${IDENTITY_DB_NAME}, ${INVENTORY_DB_NAME}, ${TERMINAL_DB_NAME}, ${AUTOMATION_DB_NAME} (${DB_ENGINE})."
+echo "[i] Now run Alembic migrations for every service to create/update tables:"
+echo "    for svc in identity-service inventory-service terminal-service automation-service \\"
+echo "               recording-service zabbix-integration-service metrics-service; do"
+echo "      docker compose run --rm --no-deps \"\$svc\" python -m alembic upgrade head"
+echo "    done"
