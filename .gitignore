@@ -23,3 +23,8 @@ backups/
 *.swo
 *.zip
 web-search-mcp/
+
+# Only README.md is tracked — everything else stays local (skill docs,
+# design notes, test-case docs, etc. don't belong in the public repo).
+*.md
+!README.md
