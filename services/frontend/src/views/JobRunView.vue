@@ -1,0 +1,214 @@
+<template>
+  <AppShell>
+    <div class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Job Run</div>
+          <div class="page-subtitle" v-if="run">{{ run.job_template_name || run.job_template_id }}</div>
+        </div>
+        <div v-if="run" style="display:flex;gap:12px;align-items:center">
+          <span :class="statusClass(run.status)" style="font-size:14px">{{ run.status }}</span>
+          <button v-if="['pending','running'].includes(run.status)" class="btn btn-sm" style="color:var(--danger)" @click="cancelRun">Cancel</button>
+          <button v-else class="btn btn-sm" :disabled="rerunning" @click="rerun">{{ rerunning ? 'Re-running…' : '↻ Re-run' }}</button>
+          <button class="btn btn-sm" @click="router.push('/jobs')">← Job Runs</button>
+        </div>
+      </div>
+
+      <div v-if="run" class="card" style="margin-bottom:16px">
+        <div class="card-header" style="font-size:13px">Run Details</div>
+        <div style="padding:12px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;font-size:13px">
+          <div><span style="color:var(--text2)">Template:</span> {{ run.job_template_name || run.job_template_id }}</div>
+          <div><span style="color:var(--text2)">Action:</span> {{ run.action_type || '—' }}</div>
+          <div><span style="color:var(--text2)">Triggered by:</span> {{ triggeredByLabel }}</div>
+          <div v-if="isAccountOp" style="grid-column:1/-1"><span style="color:var(--text2)">Account (subject):</span> {{ subjectLabel }}</div>
+          <div><span style="color:var(--text2)">Connection login:</span> {{ credentialLabel }}</div>
+          <div style="grid-column:1/-1"><span style="color:var(--text2)">Hosts:</span> {{ hostsLabel }}</div>
+          <div><span style="color:var(--text2)">Run ID:</span> <code style="font-size:11px">{{ run.id }}</code></div>
+          <div><span style="color:var(--text2)">Started:</span> {{ run.started_at ? new Date(run.started_at).toLocaleString() : '—' }}</div>
+          <div><span style="color:var(--text2)">Duration:</span> {{ durationLabel }}</div>
+          <div v-if="run.exit_code != null"><span style="color:var(--text2)">Exit code:</span> {{ run.exit_code }}</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="font-size:13px">
+          Output Log
+          <div style="display:flex;align-items:center;gap:14px">
+            <button class="btn btn-sm" :disabled="!lines.length" @click="copyOutput" :title="copied ? 'Copied!' : 'Copy output'">
+              {{ copied ? '✓ Copied' : '⧉ Copy' }}
+            </button>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:12px;cursor:pointer">
+              <input type="checkbox" v-model="autoScroll" />
+              Auto-scroll
+            </label>
+          </div>
+        </div>
+        <div ref="logEl" style="background:#0d1117;color:#c9d1d9;font-family:monospace;font-size:12px;padding:16px;min-height:320px;max-height:60vh;overflow-y:auto;white-space:pre-wrap;border-radius:0 0 8px 8px">
+          <span v-if="!lines.length && !run" style="color:#8b949e">Loading…</span>
+          <span v-else-if="!lines.length" style="color:#8b949e">(no output yet)</span>
+          <span v-for="(line, i) in lines" :key="i">{{ line }}<br /></span>
+          <span v-if="['pending','running'].includes(run?.status ?? '')" style="color:#58a6ff">● live…</span>
+        </div>
+      </div>
+    </div>
+  </AppShell>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import AppShell from '@/components/layout/AppShell.vue'
+import api, { wsUrl } from '@/api/client'
+
+const route = useRoute()
+const router = useRouter()
+
+const runId = route.params.id as string
+const run = ref<any>(null)
+const lines = ref<string[]>([])
+const autoScroll = ref(true)
+const logEl = ref<HTMLElement | null>(null)
+let ws: WebSocket | null = null
+
+// Best-effort name lookups (admin-gated endpoints degrade to ids for non-admins).
+const hostMap = ref<Record<string, string>>({})
+const credMap = ref<Record<string, any>>({})
+const userMap = ref<Record<string, string>>({})
+
+async function loadMaps() {
+  const [hosts, creds, users] = await Promise.all([
+    api.get('/hosts').then(r => r.data).catch(() => []),
+    api.get('/credentials').then(r => r.data).catch(() => []),
+    api.get('/users').then(r => r.data).catch(() => []),
+  ])
+  hostMap.value = Object.fromEntries(hosts.map((h: any) => [h.id, h.name]))
+  credMap.value = Object.fromEntries(creds.map((c: any) => [c.id, c]))
+  userMap.value = Object.fromEntries(users.map((u: any) => [u.id, u.username || u.name || u.id]))
+}
+
+// The subject account = the user actually created / managed on the hosts (account ops).
+const ACCOUNT_OPS = ['account_push', 'rotate_secret', 'disable_account', 'remove_account']
+const isAccountOp = computed(() => ACCOUNT_OPS.includes(run.value?.action_type))
+const subjectLabel = computed(() => {
+  const id = run.value?.subject_credential_id
+  if (!id) return '— not set —'
+  const c = credMap.value[id]
+  if (!c) return id
+  return c.username ? `${c.name} → user “${c.username}”` : c.name
+})
+
+const triggeredByLabel = computed(() => {
+  const r = run.value
+  if (!r) return '—'
+  if (r.triggered_by_kind === 'user' && r.triggered_by_user_id) {
+    return '👤 ' + (userMap.value[r.triggered_by_user_id] || r.triggered_by_user_id)
+  }
+  return r.triggered_by || '—'
+})
+const hostsLabel = computed(() => {
+  const ids: string[] = run.value?.target_host_ids || []
+  if (!ids.length) return '—'
+  return ids.map(id => hostMap.value[id] || id).join(', ')
+})
+const credentialLabel = computed(() => {
+  const r = run.value
+  if (!r) return '—'
+  if (Object.keys(r.host_credentials || {}).length) return 'Per-host credentials'
+  if (!r.credential_id) return "Default — host's push account"
+  return credMap.value[r.credential_id]?.name || r.credential_id
+})
+
+async function fetchRun() {
+  run.value = (await api.get(`/job-runs/${runId}`)).data
+  lines.value = (run.value.output_lines || []) as string[]
+}
+
+function openWs() {
+  if (ws) return
+  ws = new WebSocket(wsUrl(`jobs/${runId}/log`))
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data)
+      if (msg.type === 'line') {
+        lines.value.push(msg.line)
+        if (autoScroll.value) scrollToBottom()
+      } else if (msg.type === 'done') {
+        run.value = { ...run.value, status: msg.status, exit_code: msg.exit_code }
+        ws?.close()
+        ws = null
+        fetchRun()
+      }
+    } catch { /* non-JSON frame */ }
+  }
+  ws.onerror = () => { ws = null }
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight
+  })
+}
+
+watch(lines, () => {
+  if (autoScroll.value) scrollToBottom()
+})
+
+onMounted(async () => {
+  loadMaps()
+  await fetchRun()
+  if (['pending', 'running'].includes(run.value?.status)) {
+    lines.value = []   // the WS replays the full buffer — avoid double-printing
+    openWs()
+  }
+})
+
+onUnmounted(() => {
+  ws?.close()
+})
+
+async function cancelRun() {
+  await api.delete(`/job-runs/${runId}`)
+  await fetchRun()
+}
+
+const rerunning = ref(false)
+async function rerun() {
+  rerunning.value = true
+  try {
+    const { data } = await api.post(`/job-runs/${runId}/rerun`)
+    if (data?.run_id) {
+      // Navigate to the new run and reload so the WS attaches to it.
+      router.push(`/jobs/${data.run_id}`)
+      window.location.reload()
+    }
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || 'Re-run failed')
+  } finally {
+    rerunning.value = false
+  }
+}
+
+const copied = ref(false)
+async function copyOutput() {
+  try {
+    await navigator.clipboard.writeText(lines.value.join('\n'))
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  } catch { /* clipboard unavailable */ }
+}
+
+function statusClass(s: string) {
+  if (s === 'success') return 'badge badge-green'
+  if (s === 'failed' || s === 'error') return 'badge badge-red'
+  if (s === 'running') return 'badge badge-blue'
+  return 'badge badge-gray'
+}
+
+const durationLabel = computed(() => {
+  if (!run.value?.started_at) return '—'
+  const end = run.value.ended_at ? new Date(run.value.ended_at) : new Date()
+  const secs = Math.round((end.getTime() - new Date(run.value.started_at).getTime()) / 1000)
+  if (secs < 60) return `${secs}s`
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`
+})
+</script>

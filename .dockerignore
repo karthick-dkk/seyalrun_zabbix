@@ -1,0 +1,12 @@
+# Keep host-side artifacts out of image build contexts (context = repo root).
+# Without this, COPY services/frontend/ ./ overwrites the image's freshly
+# npm-installed node_modules with the host's (macOS) one and vite breaks.
+**/node_modules
+**/dist
+**/__pycache__
+.git
+.env
+tls
+backups
+web-search-mcp
+.claude

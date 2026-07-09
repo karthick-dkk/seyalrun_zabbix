@@ -1,0 +1,691 @@
+zabbix_export:
+  version: "7.0"
+  template_groups:
+    - uuid: 7df96b18c230490a9a0a9e2307226338
+      name: SeyalRun
+  templates:
+    - uuid: a74c2dc5d7924891b43c6e2bbfe2c59f
+      template: SeyalRun Application Monitoring
+      name: SeyalRun Application Monitoring
+      description: |
+        Monitors the SeyalRun v2.0 PAM platform via its JSON HTTP API.
+        Requires a Personal Access Token with scope "metrics:read" configured
+        in the {$SEYALRUN.TOKEN} macro.
+
+        Endpoints polled:
+          /api/health/live    — liveness (30s, no auth)
+          /api/health/ready   — readiness (60s, no auth)
+          /api/metrics/all    — full bundle (60s, auth required)
+
+        LLD rules discover: webhook integrations, housekeeping jobs,
+        external service integrations, Celery queues.
+      groups:
+        - name: SeyalRun
+
+      macros:
+        - macro: "{$SEYALRUN.URL}"
+          value: "https://192.168.64.7:8443"
+          description: "Base URL of SeyalRun (edge-proxy). No trailing slash."
+        - macro: "{$SEYALRUN.TOKEN}"
+          value: ""
+          description: "Personal Access Token with scope metrics:read (sr_...)"
+        - macro: "{$SEYALRUN.QUEUE.HIGH}"
+          value: "100"
+          description: "Alert threshold — queue depth above this value triggers Warning"
+        - macro: "{$SEYALRUN.EXEC.FAIL.PCT}"
+          value: "20"
+          description: "Alert threshold — failed execution rate % in last 1h"
+        - macro: "{$SEYALRUN.WEBHOOK.SIG.FAIL}"
+          value: "5"
+          description: "Alert threshold — signature failures in 24h before Warning"
+        - macro: "{$SEYALRUN.WEBHOOK.SECRET.DAYS}"
+          value: "90"
+          description: "Alert threshold — webhook secret age in days before Info"
+        - macro: "{$SEYALRUN.HK.FAIL.COUNT}"
+          value: "3"
+          description: "Alert threshold — consecutive housekeeping failures before Warning"
+        - macro: "{$SEYALRUN.IDLE.SESSION.MAX}"
+          value: "5"
+          description: "Alert threshold — idle sessions over 5m before Warning"
+
+      items:
+        # ── Liveness ────────────────────────────────────────────────────────
+        - uuid: b1a2c3d4e5f6a7b8c9d0e1f2a3b4c5d6
+          name: "SeyalRun: Liveness check"
+          type: HTTP_AGENT
+          key: "seyalrun.health.live"
+          url: "{$SEYALRUN.URL}/api/health/live"
+          retrieve_mode: BODY
+          delay: 30s
+          history: 7d
+          trends: 365d
+          value_type: TEXT
+          description: "GET /api/health/live — verifies the API process responds"
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.status"
+          tags:
+            - tag: component
+              value: health
+
+        - uuid: b2a3c4d5e6f7a8b9c0d1e2f3a4b5c6d7
+          name: "SeyalRun: Uptime (seconds)"
+          type: DEPENDENT
+          key: "seyalrun.uptime"
+          master_item:
+            key: "seyalrun.health.live"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: UNSIGNED
+          units: s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.uptime_seconds"
+          tags:
+            - tag: component
+              value: health
+
+        # ── Readiness ────────────────────────────────────────────────────────
+        - uuid: c1b2d3e4f5a6b7c8d9e0f1a2b3c4d5e6
+          name: "SeyalRun: Readiness status"
+          type: HTTP_AGENT
+          key: "seyalrun.health.ready"
+          url: "{$SEYALRUN.URL}/api/health/ready"
+          retrieve_mode: BODY
+          delay: 60s
+          history: 7d
+          trends: 365d
+          value_type: TEXT
+          description: "GET /api/health/ready — checks DB, Redis and all internal services"
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.status"
+          tags:
+            - tag: component
+              value: health
+
+        - uuid: c2b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7
+          name: "SeyalRun: Redis latency (ms)"
+          type: DEPENDENT
+          key: "seyalrun.redis.latency"
+          master_item:
+            key: "seyalrun.health.ready"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: FLOAT
+          units: ms
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.checks.redis.latency_ms"
+              error_handler: DISCARD_VALUE
+          tags:
+            - tag: component
+              value: infrastructure
+
+        - uuid: c3b4d5e6f7a8b9c0d1e2f3a4b5c6d7e8
+          name: "SeyalRun: identity-service latency (ms)"
+          type: DEPENDENT
+          key: "seyalrun.svc.identity.latency"
+          master_item:
+            key: "seyalrun.health.ready"
+          delay: 0
+          history: 90d
+          value_type: FLOAT
+          units: ms
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.checks.identity_service.latency_ms"
+              error_handler: DISCARD_VALUE
+
+        - uuid: c4b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9
+          name: "SeyalRun: inventory-service latency (ms)"
+          type: DEPENDENT
+          key: "seyalrun.svc.inventory.latency"
+          master_item:
+            key: "seyalrun.health.ready"
+          delay: 0
+          history: 90d
+          value_type: FLOAT
+          units: ms
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.checks.inventory_service.latency_ms"
+              error_handler: DISCARD_VALUE
+
+        # ── Master metrics bundle ────────────────────────────────────────────
+        - uuid: d1c2e3f4a5b6c7d8e9f0a1b2c3d4e5f6
+          name: "SeyalRun: metrics bundle (master)"
+          type: HTTP_AGENT
+          key: "seyalrun.metrics.all"
+          url: "{$SEYALRUN.URL}/api/metrics/all"
+          retrieve_mode: BODY
+          delay: 60s
+          history: 1d
+          trends: 0
+          value_type: TEXT
+          headers:
+            - name: Authorization
+              value: "Bearer {$SEYALRUN.TOKEN}"
+          description: |
+            Master item — all other metric items are DEPENDENT on this.
+            Polls /api/metrics/all every 60s; reduces API calls to one.
+          tags:
+            - tag: component
+              value: metrics
+
+        # ── Application counters (dependent on master) ───────────────────────
+        - uuid: e1d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6
+          name: "SeyalRun: users (total)"
+          type: DEPENDENT
+          key: "seyalrun.app.users.total"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.app.users_total"
+              error_handler: DISCARD_VALUE
+
+        - uuid: e2d3f4a5b6c7d8e9f0a1b2c3d4e5f6a7
+          name: "SeyalRun: users active (last 24h)"
+          type: DEPENDENT
+          key: "seyalrun.app.users.active24h"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.app.users_active_24h"
+              error_handler: DISCARD_VALUE
+
+        - uuid: e3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8
+          name: "SeyalRun: SSH sessions active"
+          type: DEPENDENT
+          key: "seyalrun.app.sessions.active"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.app.sessions_active"
+              error_handler: DISCARD_VALUE
+
+        - uuid: e4d5f6a7b8c9d0e1f2a3b4c5d6e7f8a9
+          name: "SeyalRun: SSH sessions idle >5m"
+          type: DEPENDENT
+          key: "seyalrun.app.sessions.idle5m"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.app.sessions_idle_over_5m"
+              error_handler: DISCARD_VALUE
+
+        - uuid: e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0
+          name: "SeyalRun: executions running"
+          type: DEPENDENT
+          key: "seyalrun.exec.running"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.executions.executions_running"
+              error_handler: DISCARD_VALUE
+
+        - uuid: e6d7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
+          name: "SeyalRun: executions queued"
+          type: DEPENDENT
+          key: "seyalrun.exec.queued"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.executions.executions_queued"
+              error_handler: DISCARD_VALUE
+
+        - uuid: e7d8f9a0b1c2d3e4f5a6b7c8d9e0f1a2
+          name: "SeyalRun: execution failed rate 1h (%)"
+          type: DEPENDENT
+          key: "seyalrun.exec.failrate1h"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: FLOAT
+          units: "%"
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.executions.failed_rate_1h_pct"
+              error_handler: DISCARD_VALUE
+
+        - uuid: e8d9f0a1b2c3d4e5f6a7b8c9d0e1f2a3
+          name: "SeyalRun: playbooks total"
+          type: DEPENDENT
+          key: "seyalrun.playbooks.total"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.playbooks.playbooks_total"
+              error_handler: DISCARD_VALUE
+
+        # ── System resources (dependent on master) ───────────────────────────
+        - uuid: f1e2a3b4c5d6e7f8a9b0c1d2e3f4a5b6
+          name: "SeyalRun: CPU used (%)"
+          type: DEPENDENT
+          key: "seyalrun.system.cpu"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: FLOAT
+          units: "%"
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.system.cpu_used_pct"
+              error_handler: DISCARD_VALUE
+
+        - uuid: f2e3a4b5c6d7e8f9a0b1c2d3e4f5a6b7
+          name: "SeyalRun: memory used (%)"
+          type: DEPENDENT
+          key: "seyalrun.system.mem.pct"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: FLOAT
+          units: "%"
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.system.memory_used_pct"
+              error_handler: DISCARD_VALUE
+
+        - uuid: f3e4a5b6c7d8e9f0a1b2c3d4e5f6a7b8
+          name: "SeyalRun: disk used (%)"
+          type: DEPENDENT
+          key: "seyalrun.system.disk.pct"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          trends: 365d
+          value_type: FLOAT
+          units: "%"
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.system.disk_used_pct"
+              error_handler: DISCARD_VALUE
+
+        # ── Audit ─────────────────────────────────────────────────────────────
+        - uuid: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d7
+          name: "SeyalRun: audit events (last 1h)"
+          type: DEPENDENT
+          key: "seyalrun.audit.events1h"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.audit.events_1h"
+              error_handler: DISCARD_VALUE
+
+        - uuid: a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d8
+          name: "SeyalRun: audit error events (last 1h)"
+          type: DEPENDENT
+          key: "seyalrun.audit.errors1h"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          history: 90d
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.audit.error_events_1h"
+              error_handler: DISCARD_VALUE
+
+      # ── Discovery rules ────────────────────────────────────────────────────
+      discovery_rules:
+        # Webhook integrations
+        - uuid: d2c3e4f5a6b7c8d9e0f1a2b3c4d5e6f7
+          name: "SeyalRun: Webhook integrations discovery"
+          type: DEPENDENT
+          key: "seyalrun.discover.webhooks"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          lifetime: 30d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.webhooks.data"
+              error_handler: DISCARD_VALUE
+          item_prototypes:
+            - uuid: i1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6
+              name: "SeyalRun webhook [{#INTEGRATION}]: calls success (last 1h)"
+              type: DEPENDENT
+              key: "seyalrun.webhook.success1h[{#INTEGRATION}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: UNSIGNED
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.webhooks.data[?(@['{#INTEGRATION}'] == '{#INTEGRATION}')].calls_success_1h.first()"
+                  error_handler: DISCARD_VALUE
+            - uuid: i2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7
+              name: "SeyalRun webhook [{#INTEGRATION}]: calls failed (last 1h)"
+              type: DEPENDENT
+              key: "seyalrun.webhook.failed1h[{#INTEGRATION}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: UNSIGNED
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.webhooks.data[?(@['{#INTEGRATION}'] == '{#INTEGRATION}')].calls_failed_1h.first()"
+                  error_handler: DISCARD_VALUE
+            - uuid: i3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8
+              name: "SeyalRun webhook [{#INTEGRATION}]: signature failures (24h)"
+              type: DEPENDENT
+              key: "seyalrun.webhook.sigfail24h[{#INTEGRATION}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: UNSIGNED
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.webhooks.data[?(@['{#INTEGRATION}'] == '{#INTEGRATION}')].signature_failures_24h.first()"
+                  error_handler: DISCARD_VALUE
+            - uuid: i4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9
+              name: "SeyalRun webhook [{#INTEGRATION}]: secret age (days)"
+              type: DEPENDENT
+              key: "seyalrun.webhook.secretage[{#INTEGRATION}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: UNSIGNED
+              units: days
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.webhooks.data[?(@['{#INTEGRATION}'] == '{#INTEGRATION}')].secret_age_days.first()"
+                  error_handler: DISCARD_VALUE
+
+          trigger_prototypes:
+            - uuid: t1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6
+              expression: "last(/SeyalRun Application Monitoring/seyalrun.webhook.sigfail24h[{#INTEGRATION}])>{$SEYALRUN.WEBHOOK.SIG.FAIL}"
+              name: "SeyalRun: Webhook [{#INTEGRATION}] — high signature failures (>{$SEYALRUN.WEBHOOK.SIG.FAIL} in 24h)"
+              priority: WARNING
+              description: "Multiple signature verification failures suggest a misconfigured or brute-forced webhook secret."
+            - uuid: t2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7
+              expression: "last(/SeyalRun Application Monitoring/seyalrun.webhook.secretage[{#INTEGRATION}])>{$SEYALRUN.WEBHOOK.SECRET.DAYS}"
+              name: "SeyalRun: Webhook [{#INTEGRATION}] — secret age over {$SEYALRUN.WEBHOOK.SECRET.DAYS} days"
+              priority: INFO
+              description: "Webhook HMAC secret has not been rotated for a long time. Rotate via Admin → Security."
+
+        # Housekeeping jobs
+        - uuid: d3c4e5f6a7b8c9d0e1f2a3b4c5d6e7f8
+          name: "SeyalRun: Housekeeping jobs discovery"
+          type: DEPENDENT
+          key: "seyalrun.discover.housekeeping"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          lifetime: 30d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.housekeeping.data"
+              error_handler: DISCARD_VALUE
+          item_prototypes:
+            - uuid: j1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6
+              name: "SeyalRun housekeeping [{#JOB}]: last status"
+              type: DEPENDENT
+              key: "seyalrun.hk.status[{#JOB}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: TEXT
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.housekeeping.data[?(@['{#JOB}'] == '{#JOB}')].last_status.first()"
+                  error_handler: DISCARD_VALUE
+            - uuid: j2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7
+              name: "SeyalRun housekeeping [{#JOB}]: consecutive failures"
+              type: DEPENDENT
+              key: "seyalrun.hk.consec_fail[{#JOB}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: UNSIGNED
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.housekeeping.data[?(@['{#JOB}'] == '{#JOB}')].consecutive_failures.first()"
+                  error_handler: DISCARD_VALUE
+            - uuid: j3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8
+              name: "SeyalRun housekeeping [{#JOB}]: last duration (ms)"
+              type: DEPENDENT
+              key: "seyalrun.hk.duration[{#JOB}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: UNSIGNED
+              units: ms
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.housekeeping.data[?(@['{#JOB}'] == '{#JOB}')].last_duration_ms.first()"
+                  error_handler: DISCARD_VALUE
+
+          trigger_prototypes:
+            - uuid: t3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8
+              expression: "last(/SeyalRun Application Monitoring/seyalrun.hk.consec_fail[{#JOB}])>={$SEYALRUN.HK.FAIL.COUNT}"
+              name: "SeyalRun: Housekeeping [{#JOB}] — {$SEYALRUN.HK.FAIL.COUNT}+ consecutive failures"
+              priority: WARNING
+              description: "Background maintenance task is failing. Check api-gateway logs for errors."
+
+        # External service integrations
+        - uuid: d4c5e6f7a8b9c0d1e2f3a4b5c6d7e8f9
+          name: "SeyalRun: Service integrations discovery"
+          type: DEPENDENT
+          key: "seyalrun.discover.integrations"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          lifetime: 30d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.integrations.data"
+              error_handler: DISCARD_VALUE
+          item_prototypes:
+            - uuid: k1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6
+              name: "SeyalRun service [{#INTEGRATION_NAME}]: reachable"
+              type: DEPENDENT
+              key: "seyalrun.svc.reachable[{#INTEGRATION_NAME}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: UNSIGNED
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.integrations.data[?(@['{#INTEGRATION_NAME}'] == '{#INTEGRATION_NAME}')].reachable.first()"
+                  error_handler: DISCARD_VALUE
+                - type: BOOL_TO_DECIMAL
+            - uuid: k2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7
+              name: "SeyalRun service [{#INTEGRATION_NAME}]: latency (ms)"
+              type: DEPENDENT
+              key: "seyalrun.svc.latency[{#INTEGRATION_NAME}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.integrations.data[?(@['{#INTEGRATION_NAME}'] == '{#INTEGRATION_NAME}')].latency_ms.first()"
+                  error_handler: DISCARD_VALUE
+
+          trigger_prototypes:
+            - uuid: t4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9
+              expression: "last(/SeyalRun Application Monitoring/seyalrun.svc.reachable[{#INTEGRATION_NAME}])=0 and find(/SeyalRun Application Monitoring/seyalrun.discover.integrations,#1,\"like\",\"internal\")=1"
+              name: "SeyalRun: Internal service [{#INTEGRATION_NAME}] — unreachable"
+              priority: HIGH
+              description: "A required internal microservice is not responding to health checks."
+
+        # Celery queues
+        - uuid: d5c6e7f8a9b0c1d2e3f4a5b6c7d8e9f0
+          name: "SeyalRun: Queue discovery"
+          type: DEPENDENT
+          key: "seyalrun.discover.queues"
+          master_item:
+            key: "seyalrun.metrics.all"
+          delay: 0
+          lifetime: 30d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - "$.queue.data"
+              error_handler: DISCARD_VALUE
+          item_prototypes:
+            - uuid: l1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6
+              name: "SeyalRun queue [{#QUEUE}]: depth (pending)"
+              type: DEPENDENT
+              key: "seyalrun.queue.depth[{#QUEUE}]"
+              master_item:
+                key: "seyalrun.metrics.all"
+              delay: 0
+              history: 90d
+              trends: 365d
+              value_type: UNSIGNED
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.queue.data[?(@['{#QUEUE}'] == '{#QUEUE}')].pending.first()"
+                  error_handler: DISCARD_VALUE
+
+          trigger_prototypes:
+            - uuid: t5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0
+              expression: "last(/SeyalRun Application Monitoring/seyalrun.queue.depth[{#QUEUE}])>{$SEYALRUN.QUEUE.HIGH}"
+              name: "SeyalRun: Queue [{#QUEUE}] — depth >{$SEYALRUN.QUEUE.HIGH} (backlog)"
+              priority: WARNING
+              description: "Job queue backlog is high. Check if workers are running and processing tasks."
+
+      # ── Non-LLD Triggers ──────────────────────────────────────────────────
+      triggers:
+        - uuid: tr01a2b3c4d5e6f7a8b9c0d1e2f3a4b5c
+          expression: "nodata(/SeyalRun Application Monitoring/seyalrun.health.live,120s)=1"
+          name: "SeyalRun: Application not reachable (no data for 2m)"
+          priority: DISASTER
+          description: |
+            No response from /api/health/live for 2 minutes.
+            Check if the Docker containers are running:
+              ssh test@<server> "docker compose -f /opt/seyalrun-v2/docker-compose.yml ps"
+          manual_close: 'YES'
+
+        - uuid: tr02a3b4c5d6e7f8a9b0c1d2e3f4a5b6c
+          expression: "last(/SeyalRun Application Monitoring/seyalrun.health.live)<>\"ok\""
+          name: "SeyalRun: Liveness check returning non-ok status"
+          priority: HIGH
+          description: "/api/health/live returned a status other than 'ok'. Process may be degraded."
+
+        - uuid: tr03a4b5c6d7e8f9a0b1c2d3e4f5a6b7c
+          expression: "last(/SeyalRun Application Monitoring/seyalrun.health.ready)<>\"ok\" and timeleft(/SeyalRun Application Monitoring/seyalrun.health.ready,2m,\"ok\")=0"
+          name: "SeyalRun: Readiness check failing for >2 minutes"
+          priority: HIGH
+          description: |
+            One or more dependencies (DB, Redis, internal service) are unhealthy.
+            Check /api/health/ready for which check is failing.
+          manual_close: 'YES'
+
+        - uuid: tr04a5b6c7d8e9f0a1b2c3d4e5f6a7b8c
+          expression: "last(/SeyalRun Application Monitoring/seyalrun.exec.failrate1h)>{$SEYALRUN.EXEC.FAIL.PCT}"
+          name: "SeyalRun: High execution failure rate (>{$SEYALRUN.EXEC.FAIL.PCT}% in 1h)"
+          priority: AVERAGE
+          description: "More than {$SEYALRUN.EXEC.FAIL.PCT}% of automation job runs failed in the last hour."
+
+        - uuid: tr05a6b7c8d9e0f1a2b3c4d5e6f7a8b9c
+          expression: "last(/SeyalRun Application Monitoring/seyalrun.app.sessions.idle5m)>{$SEYALRUN.IDLE.SESSION.MAX}"
+          name: "SeyalRun: Too many idle SSH sessions >5m (housekeeping may be stuck)"
+          priority: WARNING
+          description: |
+            More than {$SEYALRUN.IDLE.SESSION.MAX} sessions have been idle for over 5 minutes.
+            This may indicate the kill_inactive_sessions housekeeping job is not running.
+
+        - uuid: tr06a7b8c9d0e1f2a3b4c5d6e7f8a9b0c
+          expression: "last(/SeyalRun Application Monitoring/seyalrun.system.disk.pct)>90"
+          name: "SeyalRun: Disk usage critical (>90%)"
+          priority: HIGH
+          description: "Container disk usage exceeds 90%. Session recordings or logs may be filling the volume."
+
+        - uuid: tr07a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+          expression: "last(/SeyalRun Application Monitoring/seyalrun.system.mem.pct)>90"
+          name: "SeyalRun: Memory usage high (>90%)"
+          priority: AVERAGE
+
+        - uuid: tr08a9b0c1d2e3f4a5b6c7d8e9f0a1b2c
+          expression: "last(/SeyalRun Application Monitoring/seyalrun.system.cpu)>85 and timeleft(/SeyalRun Application Monitoring/seyalrun.system.cpu,5m,85)=0"
+          name: "SeyalRun: CPU sustained high (>85% for 5m)"
+          priority: AVERAGE

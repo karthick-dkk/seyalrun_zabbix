@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from libs.secrets import require_secrets
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    service_name: str = "identity-service"
+    host: str = "0.0.0.0"
+    port: int = 8101
+    log_level: str = "INFO"
+    log_path: str = "/var/log/seyalrun/identity-service.jsonl"
+
+    db_engine: str = "postgres"  # postgres|mysql
+    db_host: str = "127.0.0.1"
+    db_port: str = "5432"
+    db_user: str = "seyalrun"
+    db_password: str = ""
+    db_sslmode: str = "require"
+    identity_db_name: str = "seyalrun_identity"
+
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+
+    # Server-side session store (Redis) — sets the initial idle-window TTL at
+    # login; api-gateway (which owns session lookup on every request) is the
+    # one that slides it forward and enforces the absolute cap.
+    redis_url: str = "redis://redis:6379/0"
+    session_idle_minutes: int = 30
+
+    service_jwt_secret: str = ""
+    api_token_pepper: str = ""
+
+    # Vault — shared with inventory-service; used to encrypt TOTP secrets (Feature 6).
+    za_vault_password: str = ""
+    za_vault_salt: str = ""
+
+    zabbix_api_url: str = ""
+    zabbix_api_token: str = ""
+
+    # Used only to resolve a Zabbix hostid -> SeyalRun host_id for a kiosk login
+    # (see auth.py::_resolve_kiosk_host); never used for anything user-facing.
+    inventory_service_url: str = "http://inventory-service:8102"
+
+    frontend_origin: str = ""
+
+    audit_log_retention_days: int = 180
+
+    seed_admin_username: str = "Admin"
+
+    # Login brute-force lockout (DB-backed; keyed by username+IP).
+    login_max_failures: int = 5
+    login_lockout_seconds: int = 900
+    login_attempt_window_seconds: int = 900
+
+
+@lru_cache
+def get_settings() -> Settings:
+    settings = Settings()
+    require_secrets(
+        settings,
+        "db_password",
+        "jwt_secret",
+        "service_jwt_secret",
+        "api_token_pepper",
+        "za_vault_password",
+        "za_vault_salt",
+    )
+    return settings

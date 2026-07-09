@@ -1,0 +1,193 @@
+# SeyalRun Platform — Zabbix template (source of truth).
+#
+# `ops/render-zabbix-templates.sh` generates monitoring/zabbix-templates/7.0/
+# and monitoring/zabbix-templates/8.0/ from this file (adjusting
+# zabbix_export.version and any version-specific fields). Both outputs are
+# importable as-is.
+#
+# Agentless design: ONE HTTP-agent master item polls
+# {$SEYALRUN.MONITOR.URL} (zabbix-integration-service's aggregate endpoint,
+# published through edge-proxy at /webhook/zabbix/monitor) once per minute.
+# Service discovery and every health/metric item are DEPENDENT items sliced
+# from that single JSON payload with JSONPath — one HTTP request per
+# interval regardless of service count, no zabbix-agent2 sidecar, no Docker
+# socket exposure.
+#
+# Required macros after import:
+#   {$SEYALRUN.MONITOR.URL}    e.g. https://seyalrun.example.com:8443/webhook/zabbix/monitor
+#   {$SEYALRUN.MONITOR.TOKEN}  the stack's ZABBIX_WEBHOOK_HMAC_SECRET (secret text)
+zabbix_export:
+  version: '8.0'
+  template_groups:
+    - uuid: 9112306b451e4ca0855f0d9cbfb1736c
+      name: Templates/Applications
+  templates:
+    - uuid: bf7490ab018b4ee1be54a00a2349774b
+      template: 'SeyalRun Platform'
+      name: 'SeyalRun Platform'
+      description: |
+        Agentless self-monitoring for the SeyalRun v2 stack. A single HTTP-agent
+        master item polls the aggregate monitor endpoint served by
+        zabbix-integration-service (routed through edge-proxy); dependent
+        discovery + item prototypes slice per-service health and Prometheus
+        metrics out of the one JSON payload.
+      groups:
+        - name: Templates/Applications
+      macros:
+        - macro: '{$SEYALRUN.MONITOR.URL}'
+          value: 'https://seyalrun.example.com:8443/webhook/zabbix/monitor'
+          description: 'Aggregate monitor endpoint published by edge-proxy.'
+        - macro: '{$SEYALRUN.MONITOR.TOKEN}'
+          type: SECRET_TEXT
+          description: 'X-Monitor-Token value — the stack ZABBIX_WEBHOOK_HMAC_SECRET.'
+      items:
+        - uuid: 4c5ecb0bbd964d098c33b52e8397b2fd
+          name: 'Monitor: raw payload'
+          type: HTTP_AGENT
+          key: seyalrun.monitor
+          delay: 1m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          url: '{$SEYALRUN.MONITOR.URL}'
+          headers:
+            - name: X-Monitor-Token
+              value: '{$SEYALRUN.MONITOR.TOKEN}'
+          description: 'One aggregate GET per interval; every other item in this template is dependent on this payload.'
+          tags:
+            - tag: component
+              value: monitor
+          triggers:
+            - uuid: 98a7c3c3bd1d498f8247fb51f813b0e4
+              expression: 'nodata(/SeyalRun Platform/seyalrun.monitor,5m)=1'
+              name: 'SeyalRun: monitor endpoint unreachable'
+              priority: DISASTER
+              description: 'No data from {$SEYALRUN.MONITOR.URL} for 5 minutes — edge-proxy or zabbix-integration-service is down, or the monitor token is wrong (HTTP 401).'
+              tags:
+                - tag: component
+                  value: monitor
+      discovery_rules:
+        - uuid: 955a88fe8ee74e1db0b868b20047a7a2
+          name: 'SeyalRun services discovery'
+          type: DEPENDENT
+          key: seyalrun.services.discovery
+          delay: '0'
+          master_item:
+            key: seyalrun.monitor
+          preprocessing:
+            - type: JSONPATH
+              parameters: ['$.services']
+          lld_macro_paths:
+            - lld_macro: '{#SERVICE}'
+              path: $.name
+          description: 'Discovers every service from the monitor payload for health checks.'
+          item_prototypes:
+            - uuid: acee710c4b344c039ac0398b4c0ce99f
+              name: 'Health: {#SERVICE}'
+              type: DEPENDENT
+              key: 'seyalrun.health[{#SERVICE}]'
+              delay: '0'
+              value_type: CHAR
+              master_item:
+                key: seyalrun.monitor
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.services[?(@.name==''{#SERVICE}'')].health.first()']
+              description: '"ok" | "degraded" | "down" for {#SERVICE}, from its /health endpoint.'
+              tags:
+                - tag: component
+                  value: '{#SERVICE}'
+              trigger_prototypes:
+                - uuid: aa63b98121d342a5903b97d4d6d5c72a
+                  expression: 'last(/SeyalRun Platform/seyalrun.health[{#SERVICE}])="down"'
+                  name: 'SeyalRun: {#SERVICE} is down'
+                  priority: DISASTER
+                  description: '{#SERVICE} health endpoint is unreachable or returned a non-200 response.'
+                  tags:
+                    - tag: component
+                      value: '{#SERVICE}'
+                - uuid: 12166d30b16649bdbd2e386fa5260980
+                  expression: 'last(/SeyalRun Platform/seyalrun.health[{#SERVICE}])="degraded"'
+                  name: 'SeyalRun: {#SERVICE} is degraded'
+                  priority: AVERAGE
+                  description: '{#SERVICE} reports a degraded dependency (database, redis, or an upstream service).'
+                  tags:
+                    - tag: component
+                      value: '{#SERVICE}'
+        - uuid: 9840e3fcb70545c8a8f13052a2fe9d69
+          name: 'SeyalRun metrics discovery'
+          type: DEPENDENT
+          key: seyalrun.metrics.discovery
+          delay: '0'
+          master_item:
+            key: seyalrun.monitor
+          preprocessing:
+            - type: JSONPATH
+              parameters: ['$.services[?(@.has_metrics==true)]']
+          lld_macro_paths:
+            - lld_macro: '{#SERVICE}'
+              path: $.name
+          description: 'Discovers services exposing a Prometheus /metrics endpoint.'
+          item_prototypes:
+            - uuid: e6569e72926a4c618b7c80a3cc2f771d
+              name: 'Requests total: {#SERVICE}'
+              type: DEPENDENT
+              key: 'seyalrun.metrics[{#SERVICE},requests_total]'
+              delay: '0'
+              value_type: FLOAT
+              master_item:
+                key: seyalrun.monitor
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.services[?(@.name==''{#SERVICE}'')].metrics.requests_total.first()']
+                - type: CHANGE_PER_SECOND
+                  parameters: ['']
+              description: 'Request rate derived from seyalrun_requests_total.'
+              tags:
+                - tag: component
+                  value: '{#SERVICE}'
+            - uuid: b8e4952be9d047a0969a0bd88aeacd9b
+              name: 'Errors total: {#SERVICE}'
+              type: DEPENDENT
+              key: 'seyalrun.metrics[{#SERVICE},errors_total]'
+              delay: '0'
+              value_type: FLOAT
+              master_item:
+                key: seyalrun.monitor
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.services[?(@.name==''{#SERVICE}'')].metrics.errors_total.first()']
+                - type: CHANGE_PER_SECOND
+                  parameters: ['']
+              description: 'HTTP 5xx rate derived from seyalrun_errors_total.'
+              tags:
+                - tag: component
+                  value: '{#SERVICE}'
+              trigger_prototypes:
+                - uuid: af8e427b1eb34f4f854b8b1292d1265a
+                  expression: 'min(/SeyalRun Platform/seyalrun.metrics[{#SERVICE},errors_total],5m)>0.1'
+                  name: 'SeyalRun: {#SERVICE} elevated error rate'
+                  priority: HIGH
+                  description: '{#SERVICE} has sustained HTTP 5xx responses over the last 5 minutes.'
+                  tags:
+                    - tag: component
+                      value: '{#SERVICE}'
+            - uuid: 4c83e894586748bea8a4fc5d0e7fe305
+              name: 'Uptime: {#SERVICE}'
+              type: DEPENDENT
+              key: 'seyalrun.metrics[{#SERVICE},uptime_seconds]'
+              delay: '0'
+              value_type: FLOAT
+              units: s
+              master_item:
+                key: seyalrun.monitor
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.services[?(@.name==''{#SERVICE}'')].metrics.uptime_seconds.first()']
+              description: 'Process uptime from seyalrun_uptime_seconds — a drop indicates a restart.'
+              tags:
+                - tag: component
+                  value: '{#SERVICE}'
+      tags:
+        - tag: application
+          value: SeyalRun

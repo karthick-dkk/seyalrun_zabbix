@@ -1,0 +1,58 @@
+# Optional overlay: brings up a Dockerized Postgres or MySQL for users
+# without a bare-metal database. DB_ENGINE is a single, global choice for
+# the whole stack — bring up only the matching profile:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.db.yml --profile postgres-db up -d
+#   docker compose -f docker-compose.yml -f docker-compose.db.yml --profile mysql-db up -d
+#
+# Either way, set DB_HOST=postgres (or DB_HOST=mysql) in .env so
+# identity-service/inventory-service connect to this container instead of
+# a bare-metal database.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres-db"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${IDENTITY_DB_NAME}
+      INVENTORY_DB_NAME: ${INVENTORY_DB_NAME}
+      TERMINAL_DB_NAME: ${TERMINAL_DB_NAME:-seyalrun_terminal}
+      AUTOMATION_DB_NAME: ${AUTOMATION_DB_NAME:-seyalrun_automation}
+    volumes:
+      - seyalrun_pgdata:/var/lib/postgresql/data
+      - ./docker-init/postgres:/docker-entrypoint-initdb.d:ro
+    networks: [seyalrun_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8-oracle
+    profiles: ["mysql-db"]
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      IDENTITY_DB_NAME: ${IDENTITY_DB_NAME}
+      INVENTORY_DB_NAME: ${INVENTORY_DB_NAME}
+      TERMINAL_DB_NAME: ${TERMINAL_DB_NAME:-seyalrun_terminal}
+      AUTOMATION_DB_NAME: ${AUTOMATION_DB_NAME:-seyalrun_automation}
+    volumes:
+      - seyalrun_mysqldata:/var/lib/mysql
+      - ./docker-init/mysql:/docker-entrypoint-initdb.d:ro
+    networks: [seyalrun_net]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  seyalrun_pgdata:
+  seyalrun_mysqldata:

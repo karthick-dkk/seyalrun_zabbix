@@ -1,0 +1,294 @@
+# SeyalRun v2.0 — Phase 1 stack.
+#
+# By default, identity-service and inventory-service connect to your
+# existing bare-metal PostgreSQL/MySQL via DB_HOST/DB_PORT/DB_ENGINE in .env
+# (e.g. DB_HOST=192.168.64.x or host.docker.internal). If you don't have a
+# bare-metal DB, additionally apply docker-compose.db.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.db.yml --profile postgres-db up -d
+#
+# edge-proxy is the only host-published service (TLS on EDGE_HTTPS_PORT).
+# identity-service, inventory-service, and api-gateway are internal-only.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # AOF persistence so rate-limit, webhook-dedup, and login-lockout counters
+    # survive a restart (an attacker can't reset lockout by bouncing redis).
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    networks: [seyalrun_net]
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - seyalrun_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  identity-service:
+    build:
+      context: .
+      dockerfile: services/identity-service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [seyalrun_net]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8101/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: services/inventory-service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [seyalrun_net]
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8102/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  terminal-service:
+    build:
+      context: .
+      dockerfile: services/terminal-service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [seyalrun_net]
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8103/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  recording-service:
+    build:
+      context: .
+      dockerfile: services/recording-service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [seyalrun_net]
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8104/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    networks: [seyalrun_net]
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      terminal-service:
+        condition: service_healthy
+      recording-service:
+        condition: service_healthy
+      automation-service:
+        condition: service_healthy
+      zabbix-integration-service:
+        condition: service_healthy
+      metrics-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: services/frontend/Dockerfile
+    restart: unless-stopped
+    networks: [seyalrun_net]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  edge-proxy:
+    build:
+      context: .
+      dockerfile: services/edge-proxy/Dockerfile
+    restart: unless-stopped
+    # CSP frame-ancestors is always 'self' plus these EXTRA origins (default none).
+    # Set FRAME_ANCESTORS in .env to the Zabbix origin (e.g. https://zabbix.example.com,
+    # unquoted host source) to allow the embedded dashboard to iframe this app. Never "*".
+    environment:
+      FRAME_ANCESTORS: ${FRAME_ANCESTORS:-}
+    networks: [seyalrun_net]
+    # NOT read_only: the nginx entrypoint renders the CSP template into
+    # /etc/nginx/conf.d at boot (envsubst), which needs a writable conf.d owned by
+    # the unprivileged nginx user. A root-owned tmpfs there isn't writable by uid 101.
+    # The container still runs as the non-root nginx user (nginx-unprivileged image).
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    ports:
+      - "${EDGE_HTTP_PORT:-8080}:8080"
+      - "${EDGE_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - ${TLS_CERT_PATH}:/etc/nginx/ssl/cert.pem:ro
+      - ${TLS_KEY_PATH}:/etc/nginx/ssl/key.pem:ro
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+      zabbix-integration-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  automation-service:
+    build:
+      context: .
+      dockerfile: services/automation-service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [seyalrun_net]
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /playbooks
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8105/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  zabbix-integration-service:
+    build:
+      context: .
+      dockerfile: services/zabbix-integration-service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [seyalrun_net]
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      automation-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8106/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  metrics-service:
+    build:
+      context: .
+      dockerfile: services/metrics-service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [seyalrun_net]
+    volumes:
+      - seyalrun_logs:/var/log/seyalrun
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      automation-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8107/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+networks:
+  seyalrun_net:
+    driver: bridge
+
+volumes:
+  seyalrun_logs:
+  seyalrun_redis_data:

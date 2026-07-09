@@ -1,0 +1,5 @@
+# Minimal deps to run the security-invariant unit suite without DB/redis/apps.
+pytest>=8.0
+pyjwt>=2.8
+cryptography>=42.0
+pyyaml>=6.0

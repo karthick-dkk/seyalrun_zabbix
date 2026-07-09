@@ -1,0 +1,656 @@
+<title>SeyalRun — UI Redesign Draft</title>
+<style>
+/* ── Tokens ──────────────────────────────────────────────────────────── */
+:root {
+  --ground: #F6F7F9;          /* page ground */
+  --surface: #FFFFFF;         /* cards, sidebar */
+  --surface-2: #EFF1F4;       /* inputs, hover */
+  --ink: #1C2128;
+  --ink-2: #5B6472;
+  --ink-3: #9AA3B0;
+  --hairline: rgba(28,33,40,0.10);
+  --hairline-strong: rgba(28,33,40,0.16);
+  --accent: #2E6BE6;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(46,107,230,0.10);
+  --good: #2FA463;  --good-soft: rgba(47,164,99,0.12);
+  --warn: #C98A1B;  --warn-soft: rgba(201,138,27,0.13);
+  --bad:  #D64545;  --bad-soft:  rgba(214,69,69,0.11);
+  --chart-1: #2E6BE6;         /* Jobs   (validated, light) */
+  --chart-2: #1FA294;         /* Sessions (validated, light) */
+  --shadow-card: 0 1px 2px rgba(28,33,40,0.05), 0 4px 16px rgba(28,33,40,0.05);
+  --shadow-pop: 0 12px 40px rgba(28,33,40,0.18);
+  --glass: rgba(255,255,255,0.72);
+  --r: 12px; --r-s: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #101216; --surface: #17191F; --surface-2: #1F2229;
+    --ink: #E9ECF1; --ink-2: #9BA3AF; --ink-3: #626B77;
+    --hairline: rgba(233,236,241,0.09); --hairline-strong: rgba(233,236,241,0.16);
+    --accent: #5C8DFF; --accent-ink: #0C1220; --accent-soft: rgba(92,141,255,0.14);
+    --good: #4CC482; --good-soft: rgba(76,196,130,0.13);
+    --warn: #E0A63C; --warn-soft: rgba(224,166,60,0.13);
+    --bad:  #F07575; --bad-soft:  rgba(240,117,117,0.12);
+    --chart-1: #5C8DFF; --chart-2: #1A9384;   /* validated, dark */
+    --shadow-card: 0 1px 0 rgba(0,0,0,0.2);
+    --shadow-pop: 0 16px 48px rgba(0,0,0,0.5);
+    --glass: rgba(23,25,31,0.72);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #101216; --surface: #17191F; --surface-2: #1F2229;
+  --ink: #E9ECF1; --ink-2: #9BA3AF; --ink-3: #626B77;
+  --hairline: rgba(233,236,241,0.09); --hairline-strong: rgba(233,236,241,0.16);
+  --accent: #5C8DFF; --accent-ink: #0C1220; --accent-soft: rgba(92,141,255,0.14);
+  --good: #4CC482; --good-soft: rgba(76,196,130,0.13);
+  --warn: #E0A63C; --warn-soft: rgba(224,166,60,0.13);
+  --bad:  #F07575; --bad-soft:  rgba(240,117,117,0.12);
+  --chart-1: #5C8DFF; --chart-2: #1A9384;
+  --shadow-card: 0 1px 0 rgba(0,0,0,0.2);
+  --shadow-pop: 0 16px 48px rgba(0,0,0,0.5);
+  --glass: rgba(23,25,31,0.72);
+}
+:root[data-theme="light"] {
+  --ground: #F6F7F9; --surface: #FFFFFF; --surface-2: #EFF1F4;
+  --ink: #1C2128; --ink-2: #5B6472; --ink-3: #9AA3B0;
+  --hairline: rgba(28,33,40,0.10); --hairline-strong: rgba(28,33,40,0.16);
+  --accent: #2E6BE6; --accent-ink: #FFFFFF; --accent-soft: rgba(46,107,230,0.10);
+  --good: #2FA463; --good-soft: rgba(47,164,99,0.12);
+  --warn: #C98A1B; --warn-soft: rgba(201,138,27,0.13);
+  --bad:  #D64545; --bad-soft:  rgba(214,69,69,0.11);
+  --chart-1: #2E6BE6; --chart-2: #1FA294;
+  --shadow-card: 0 1px 2px rgba(28,33,40,0.05), 0 4px 16px rgba(28,33,40,0.05);
+  --shadow-pop: 0 12px 40px rgba(28,33,40,0.18);
+  --glass: rgba(255,255,255,0.72);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.5 var(--font); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* ── Draft chrome (the review wrapper, not the product) ─────────────── */
+.draft-bar { max-width: 1200px; margin: 0 auto; padding: 28px 24px 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.draft-bar h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+.draft-bar .sub { color: var(--ink-2); font-size: 13px; }
+.draft-bar .spacer { flex: 1; }
+.theme-toggle { border: 1px solid var(--hairline-strong); background: var(--surface); border-radius: 999px; padding: 5px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--ink-2); }
+.theme-toggle:hover { color: var(--ink); }
+.tabs { max-width: 1200px; margin: 0 auto 14px; padding: 0 24px; display: flex; gap: 4px; flex-wrap: wrap; }
+.tab { border: none; background: transparent; color: var(--ink-2); padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, color .15s; }
+.tab:hover { background: var(--surface-2); color: var(--ink); }
+.tab[aria-selected="true"] { background: var(--ink); color: var(--ground); }
+.screen { display: none; max-width: 1200px; margin: 0 auto 48px; padding: 0 24px; }
+.screen.on { display: block; }
+
+/* ── App frame ───────────────────────────────────────────────────────── */
+.frame { display: flex; height: 700px; border: 1px solid var(--hairline); border-radius: 16px; overflow: hidden; background: var(--ground); box-shadow: var(--shadow-card); }
+
+/* Sidebar */
+.side { width: 236px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border-right: 1px solid var(--hairline); }
+.side .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+.bolt { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent), #7A3BE6 55%)); display: grid; place-items: center; color: #fff; font-size: 14px; }
+.side nav { flex: 1; overflow-y: auto; padding: 6px 10px; }
+.nav-h { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); padding: 16px 10px 6px; }
+.nav-i { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-s); color: var(--ink-2); font-size: 13px; font-weight: 500; cursor: pointer; transition: background .12s, color .12s; }
+.nav-i:hover { background: var(--surface-2); color: var(--ink); }
+.nav-i.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nav-i .ic { width: 16px; text-align: center; opacity: .85; font-size: 13px; }
+.side .foot { border-top: 1px solid var(--hairline); padding: 12px 14px; display: flex; align-items: center; gap: 10px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 12px; }
+.foot .who { min-width: 0; }
+.foot .who b { display: block; font-size: 12.5px; }
+.foot .who span { font-size: 11px; color: var(--ink-3); }
+
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.top { display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--hairline); background: var(--glass); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); }
+.crumb { font-size: 12.5px; color: var(--ink-3); }
+.top .spacer { flex: 1; }
+.cmdk { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--ink-3); border-radius: var(--r-s); padding: 6px 10px; font-size: 12.5px; cursor: pointer; min-width: 220px; transition: border-color .15s; }
+.cmdk:hover { border-color: var(--ink-3); color: var(--ink-2); }
+kbd { font: 600 10.5px/1 var(--mono); background: var(--surface-2); border: 1px solid var(--hairline); border-bottom-width: 2px; border-radius: 5px; padding: 3px 5px; color: var(--ink-2); }
+.cmdk kbd { margin-left: auto; }
+.body { flex: 1; overflow-y: auto; padding: 24px; }
+.large-title { font-size: 28px; font-weight: 700; letter-spacing: -0.022em; margin: 0; text-wrap: balance; }
+.subtitle { color: var(--ink-2); font-size: 13px; margin: 4px 0 20px; }
+
+/* Buttons, pills */
+.btn { border: 1px solid var(--hairline-strong); background: var(--surface); border-radius: var(--r-s); padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .12s; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.06); }
+.ibtn { width: 30px; height: 30px; padding: 0; border: 1px solid var(--hairline-strong); background: var(--surface); border-radius: var(--r-s); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; color: var(--accent); transition: background .12s; }
+.ibtn:hover { background: var(--accent-soft); }
+.ibtn.test { color: var(--ink-2); }
+.ibtn.test:hover { background: var(--surface-2); }
+.chip-set { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.mini-chip { font-size: 11px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 999px; padding: 2px 8px; color: var(--ink-2); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 3px 10px; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.ok   { color: var(--good); background: var(--good-soft); }
+.pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.bad  { color: var(--bad);  background: var(--bad-soft); }
+.pill.idle { color: var(--ink-2); background: var(--surface-2); }
+
+/* Cards & stat tiles */
+.card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r); box-shadow: var(--shadow-card); }
+.card .hd { display: flex; align-items: baseline; gap: 10px; padding: 14px 18px 0; }
+.card .hd h3 { margin: 0; font-size: 13.5px; font-weight: 650; }
+.card .hd .mut { font-size: 12px; color: var(--ink-3); }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r); box-shadow: var(--shadow-card); padding: 14px 16px; }
+.stat .k { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.stat .v { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.stat .d { font-size: 11.5px; color: var(--ink-2); margin-top: 2px; }
+.stat .d.up { color: var(--good); } .stat .d.down { color: var(--bad); }
+
+.grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } .frame { height: auto; min-height: 640px; } .side { display: none; } }
+
+/* Chart */
+.chart-wrap { padding: 8px 18px 16px; }
+.legend { display: flex; gap: 16px; padding: 10px 18px 0; font-size: 12px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.chart { display: flex; align-items: flex-end; gap: 18px; height: 150px; padding-top: 12px; border-bottom: 1px solid var(--hairline); position: relative; }
+.day { flex: 1; display: flex; align-items: flex-end; justify-content: center; gap: 2px; height: 100%; position: relative; }
+.bar { width: 13px; border-radius: 4px 4px 0 0; min-height: 3px; transition: opacity .12s; cursor: default; }
+.bar.jobs { background: var(--chart-1); }
+.bar.sess { background: var(--chart-2); }
+.day:hover .bar { opacity: .82; }
+.xlab { display: flex; gap: 18px; padding-top: 6px; }
+.xlab span { flex: 1; text-align: center; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.tip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--ground); font-size: 11.5px; font-weight: 600; padding: 5px 9px; border-radius: 7px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s; font-variant-numeric: tabular-nums; z-index: 3; }
+.day:hover .tip { opacity: 1; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th { text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3); padding: 12px 18px 8px; border-bottom: 1px solid var(--hairline); }
+tbody td { padding: 10px 18px; border-bottom: 1px solid var(--hairline); font-variant-numeric: tabular-nums; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr { transition: background .1s; }
+tbody tr:hover { background: var(--surface-2); }
+.mono { font-family: var(--mono); font-size: 12px; }
+.mut { color: var(--ink-2); }
+.tbl-scroll { overflow-x: auto; }
+
+/* Toolbar (hosts) */
+.toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+.search { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--hairline-strong); background: var(--surface); border-radius: var(--r-s); padding: 7px 12px; color: var(--ink-3); font-size: 13px; }
+.chip { border: 1px solid var(--hairline-strong); background: var(--surface); border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.chip.on { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+
+/* Terminal */
+.term { background: #0C0E12; border-radius: var(--r); border: 1px solid var(--hairline); overflow: hidden; box-shadow: var(--shadow-card); }
+.term .bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid rgba(233,236,241,0.08); color: #9BA3AF; font-size: 12.5px; }
+.term .dots i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 6px; }
+.term pre { margin: 0; padding: 16px 18px 22px; font: 12.5px/1.7 var(--mono); color: #D7DEE8; overflow-x: auto; }
+.term .p1 { color: #4CC482; } .term .p2 { color: #5C8DFF; } .term .dim { color: #626B77; }
+.rec { display: inline-flex; align-items: center; gap: 6px; color: #F07575; font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; }
+.rec::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #F07575; animation: blink 1.6s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+
+/* Login */
+.login-stage { display: grid; place-items: center; min-height: 620px; background:
+  radial-gradient(600px 300px at 30% 20%, var(--accent-soft), transparent 70%), var(--ground);
+  border: 1px solid var(--hairline); border-radius: 16px; }
+.login-card { width: 340px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 16px; box-shadow: var(--shadow-pop); padding: 28px; }
+.login-card .bolt { width: 40px; height: 40px; border-radius: 12px; font-size: 20px; margin-bottom: 14px; }
+.login-card h2 { margin: 0 0 2px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.login-card p { margin: 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 11.5px; font-weight: 650; color: var(--ink-2); margin-bottom: 5px; }
+.field input { width: 100%; border: 1px solid var(--hairline-strong); background: var(--surface-2); color: var(--ink); border-radius: var(--r-s); padding: 9px 12px; font: 13.5px var(--font); }
+.field input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+.login-card .btn.primary { width: 100%; justify-content: center; padding: 10px; margin-top: 6px; }
+.notice { margin-top: 14px; padding: 10px 12px; border-radius: var(--r-s); background: var(--warn-soft); color: var(--warn); font-size: 12px; font-weight: 550; }
+
+/* Settings (System Settings-style) */
+.btn.gear { padding: 6px 10px; font-size: 15px; line-height: 1; }
+.set-rail { width: 224px; flex-shrink: 0; border-right: 1px solid var(--hairline); background: var(--glass); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); overflow-y: auto; padding: 12px 10px; }
+.set-rail .search { min-width: 0; margin: 2px 4px 6px; padding: 6px 10px; font-size: 12.5px; }
+.set-i { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--r-s); color: var(--ink-2); font-size: 13px; font-weight: 500; cursor: pointer; }
+.set-i:hover { background: var(--surface-2); color: var(--ink); }
+.set-i.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.set-i .sic { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; color: #fff; flex-shrink: 0; }
+.set-pane { flex: 1; overflow-y: auto; padding: 24px 28px; min-width: 0; }
+.set-pane .crumbs { font-size: 12px; color: var(--ink-3); margin-bottom: 4px; }
+.row-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r); box-shadow: var(--shadow-card); }
+.srow { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+.srow:last-child { border-bottom: none; }
+.srow .grow { flex: 1; min-width: 0; }
+.srow b { font-size: 13.5px; font-weight: 600; display: block; }
+.srow .desc { font-size: 12px; color: var(--ink-2); }
+.switch { width: 40px; height: 24px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--hairline-strong); position: relative; cursor: pointer; transition: background .15s, border-color .15s; flex-shrink: 0; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: left .15s; }
+.switch.on { background: var(--good); border-color: var(--good); }
+.switch.on::after { left: 18px; }
+.set-h { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); padding: 14px 10px 5px; }
+
+/* Command palette */
+.veil { position: fixed; inset: 0; background: rgba(10,12,16,0.4); display: none; align-items: flex-start; justify-content: center; padding-top: 14vh; z-index: 50; backdrop-filter: blur(2px); }
+.veil.on { display: flex; }
+.palette { width: 560px; max-width: calc(100vw - 40px); background: var(--glass); backdrop-filter: blur(28px) saturate(1.5); -webkit-backdrop-filter: blur(28px) saturate(1.5); border: 1px solid var(--hairline-strong); border-radius: 14px; box-shadow: var(--shadow-pop); overflow: hidden; }
+.palette input { width: 100%; border: none; background: transparent; color: var(--ink); font: 16px var(--font); padding: 16px 18px; border-bottom: 1px solid var(--hairline); }
+.palette input:focus { outline: none; }
+.palette .sec { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); padding: 12px 18px 4px; }
+.pi { display: flex; align-items: center; gap: 12px; padding: 9px 18px; font-size: 13.5px; cursor: pointer; }
+.pi:hover, .pi.sel { background: var(--accent-soft); }
+.pi .ic { width: 18px; text-align: center; }
+.pi kbd { margin-left: auto; }
+.palette .ft { padding: 9px 18px; border-top: 1px solid var(--hairline); font-size: 11.5px; color: var(--ink-3); display: flex; gap: 14px; }
+
+/* Design-system tab */
+.ds h2 { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; margin: 28px 0 10px; }
+.ds p { max-width: 640px; color: var(--ink-2); }
+.sw-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.sw { width: 120px; border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.sw i { display: block; height: 52px; }
+.sw b { display: block; font-size: 11px; padding: 7px 9px 1px; }
+.sw span { display: block; font-family: var(--mono); font-size: 10px; color: var(--ink-3); padding: 0 9px 8px; }
+.type-scale div { border-bottom: 1px solid var(--hairline); padding: 10px 0; }
+.type-scale small { display: block; color: var(--ink-3); font-size: 11px; font-family: var(--mono); }
+.ds ul { color: var(--ink-2); max-width: 680px; padding-left: 20px; }
+.ds li { margin-bottom: 8px; }
+.ds li b { color: var(--ink); }
+</style>
+
+<div class="draft-bar">
+  <h1>SeyalRun · UI redesign draft</h1>
+  <span class="sub">v2 concept — “Console, not cockpit”</span>
+  <span class="spacer"></span>
+  <button class="theme-toggle" id="themeBtn" aria-label="Toggle color theme">◐ Theme</button>
+</div>
+
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" aria-selected="true" data-s="dash">Dashboard</button>
+  <button class="tab" role="tab" aria-selected="false" data-s="hosts">Hosts</button>
+  <button class="tab" role="tab" aria-selected="false" data-s="assets">Assets</button>
+  <button class="tab" role="tab" aria-selected="false" data-s="term">Terminal</button>
+  <button class="tab" role="tab" aria-selected="false" data-s="settings">Settings</button>
+  <button class="tab" role="tab" aria-selected="false" data-s="login">Login</button>
+  <button class="tab" role="tab" aria-selected="false" data-s="ds">Design system</button>
+</div>
+
+<!-- ══ DASHBOARD ══ -->
+<section class="screen on" id="s-dash">
+  <div class="frame">
+    <aside class="side">
+      <div class="brand"><span class="bolt">⚡</span> SeyalRun</div>
+      <nav>
+        <div class="nav-i on"><span class="ic">▦</span> Dashboard</div>
+        <div class="nav-i"><span class="ic">🖥</span> Hosts</div>
+        <div class="nav-i"><span class="ic">◈</span> Assets</div>
+        <div class="nav-i"><span class="ic">⌁</span> Sessions</div>
+        <div class="nav-i"><span class="ic">▶</span> Job Runs</div>
+        <div class="nav-i"><span class="ic">⚙</span> Automation</div>
+        <div class="nav-h">System</div>
+        <div class="nav-i" onclick="goSettings()"><span class="ic">⚙</span> Settings <kbd style="margin-left:auto">⌘,</kbd></div>
+      </nav>
+      <div class="foot">
+        <span class="avatar">A</span>
+        <span class="who"><b>Admin</b><span>superadmin</span></span>
+      </div>
+    </aside>
+    <div class="main">
+      <div class="top">
+        <span class="crumb">SeyalRun / Dashboard</span>
+        <span class="spacer"></span>
+        <button class="cmdk" onclick="openPal()">⌕ Search or jump to… <kbd>⌘K</kbd></button>
+        <button class="btn">SSH Terminal</button>
+      </div>
+      <div class="body">
+        <h2 class="large-title">Good evening, Admin</h2>
+        <p class="subtitle">All 10 services healthy · last incident 6 days ago</p>
+
+        <div class="stat-row">
+          <div class="stat"><div class="k">Hosts</div><div class="v">24</div><div class="d up">22 reachable</div></div>
+          <div class="stat"><div class="k">Active sessions</div><div class="v">3</div><div class="d">live SSH</div></div>
+          <div class="stat"><div class="k">Jobs today</div><div class="v">17</div><div class="d up">+5 vs yesterday</div></div>
+          <div class="stat"><div class="k">Success rate</div><div class="v">96%</div><div class="d">7-day window</div></div>
+          <div class="stat"><div class="k">ACL blocks</div><div class="v">2</div><div class="d down">last 24 h</div></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="hd"><h3>7-day activity</h3><span class="mut">jobs &amp; sessions per day</span></div>
+            <div class="legend"><span><i style="background:var(--chart-1)"></i>Jobs</span><span><i style="background:var(--chart-2)"></i>Sessions</span></div>
+            <div class="chart-wrap">
+              <div class="chart" id="chart"></div>
+              <div class="xlab" id="xlab"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="hd"><h3>Active sessions</h3><span class="mut">3 live</span></div>
+            <div class="tbl-scroll"><table>
+              <thead><tr><th>User</th><th>Host</th><th>Since</th></tr></thead>
+              <tbody>
+                <tr><td>priya</td><td class="mono">web-01</td><td class="mut">12 min</td></tr>
+                <tr><td>arun</td><td class="mono">db-primary</td><td class="mut">34 min</td></tr>
+                <tr><td>Admin</td><td class="mono">edge-fw</td><td class="mut">1 h 02</td></tr>
+              </tbody>
+            </table></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="hd"><h3>Recent jobs</h3><span class="mut">latest 4 runs</span></div>
+          <div class="tbl-scroll"><table>
+            <thead><tr><th>Status</th><th>Playbook</th><th>Triggered by</th><th>When</th></tr></thead>
+            <tbody>
+              <tr><td><span class="pill ok">success</span></td><td>nginx-reload</td><td class="mut">zabbix: high CPU</td><td class="mut">2 min ago</td></tr>
+              <tr><td><span class="pill ok">success</span></td><td>rotate-logs</td><td class="mut">schedule</td><td class="mut">1 h ago</td></tr>
+              <tr><td><span class="pill bad">failed</span></td><td>patch-openssl</td><td class="mut">user: arun</td><td class="mut">3 h ago</td></tr>
+              <tr><td><span class="pill warn">running</span></td><td>backup-verify</td><td class="mut">schedule</td><td class="mut">now</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ HOSTS ══ -->
+<section class="screen" id="s-hosts">
+  <div class="frame">
+    <div class="main" style="border-left:none">
+      <div class="top">
+        <span class="crumb">SeyalRun / Hosts</span>
+        <span class="spacer"></span>
+        <button class="cmdk" onclick="openPal()">⌕ Search or jump to… <kbd>⌘K</kbd></button>
+      </div>
+      <div class="body">
+        <h2 class="large-title">Hosts</h2>
+        <p class="subtitle">Connect surface — read-only. Reachability test (⟳) appears only for roles with write access; inventory editing lives in Assets.</p>
+        <div class="toolbar">
+          <div class="search">⌕ Filter by name, IP, or group… <span style="margin-left:auto"><kbd>/</kbd></span></div>
+          <button class="chip on">All</button>
+          <button class="chip">dc-1</button>
+          <button class="chip">dc-2</button>
+          <button class="chip">dmz</button>
+        </div>
+        <div class="card"><div class="tbl-scroll"><table>
+          <thead><tr><th>Host</th><th>IP</th><th>Host group</th><th>Credentials</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody>
+            <tr><td><b>web-01</b></td><td class="mono">10.20.4.11</td><td class="mut">web-servers</td><td class="mono">2</td><td style="text-align:right;white-space:nowrap"><button class="ibtn" title="Open SSH terminal" aria-label="Open SSH terminal">⌁</button> <button class="ibtn test" title="Test reachability (admin/write only)" aria-label="Test reachability">⟳</button></td></tr>
+            <tr><td><b>web-02</b></td><td class="mono">10.20.4.12</td><td class="mut">web-servers</td><td class="mono">2</td><td style="text-align:right;white-space:nowrap"><button class="ibtn" title="Open SSH terminal" aria-label="Open SSH terminal">⌁</button> <button class="ibtn test" title="Test reachability (admin/write only)" aria-label="Test reachability">⟳</button></td></tr>
+            <tr><td><b>db-primary</b></td><td class="mono">10.20.8.5</td><td class="mut">databases</td><td class="mono">3</td><td style="text-align:right;white-space:nowrap"><button class="ibtn" title="Open SSH terminal" aria-label="Open SSH terminal">⌁</button> <button class="ibtn test" title="Test reachability (admin/write only)" aria-label="Test reachability">⟳</button></td></tr>
+            <tr><td><b>db-replica</b></td><td class="mono">10.20.8.6</td><td class="mut">databases</td><td class="mono">3</td><td style="text-align:right;white-space:nowrap"><button class="ibtn" title="Open SSH terminal" aria-label="Open SSH terminal">⌁</button> <button class="ibtn test" title="Test reachability (admin/write only)" aria-label="Test reachability">⟳</button></td></tr>
+            <tr><td><b>edge-fw</b></td><td class="mono">10.20.1.1</td><td class="mut">network</td><td class="mono">1</td><td style="text-align:right;white-space:nowrap"><button class="ibtn" title="Open SSH terminal" aria-label="Open SSH terminal">⌁</button> <button class="ibtn test" title="Test reachability (admin/write only)" aria-label="Test reachability">⟳</button></td></tr>
+            <tr><td><b>legacy-app</b></td><td class="mono">10.20.9.40</td><td class="mut">legacy</td><td class="mono">1</td><td style="text-align:right;white-space:nowrap"><button class="ibtn" title="Open SSH terminal" aria-label="Open SSH terminal">⌁</button> <button class="ibtn test" title="Test reachability (admin/write only)" aria-label="Test reachability">⟳</button></td></tr>
+          </tbody>
+        </table></div></div>
+        <p class="subtitle" style="margin-top:12px">Viewer roles see only ⌁ connect — the ⟳ test column is rendered from <span class="mono">/auth/nav</span> permissions.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ ASSETS ══ -->
+<section class="screen" id="s-assets">
+  <div class="frame">
+    <div class="main" style="border-left:none">
+      <div class="top">
+        <span class="crumb">SeyalRun / Assets</span>
+        <span class="spacer"></span>
+        <button class="cmdk" onclick="openPal()">⌕ Search or jump to… <kbd>⌘K</kbd></button>
+        <button class="btn primary">+ Add host</button>
+      </div>
+      <div class="body">
+        <h2 class="large-title">Assets</h2>
+        <p class="subtitle">Full inventory — who may log in, with which credentials. Everything here is editable (admin / write roles).</p>
+        <div class="toolbar">
+          <div class="search">⌕ Filter assets… <span style="margin-left:auto"><kbd>/</kbd></span></div>
+          <button class="chip on">All groups</button>
+          <button class="chip">web-servers</button>
+          <button class="chip">databases</button>
+          <button class="chip">Unassigned creds</button>
+        </div>
+        <div class="card"><div class="tbl-scroll"><table>
+          <thead><tr><th>Host</th><th>IP</th><th>Group</th><th>Users allowed</th><th>Credentials allowed</th><th>State</th><th style="text-align:right">Edit</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>web-01</b></td><td class="mono">10.20.4.11</td><td class="mut">web-servers</td>
+              <td><span class="chip-set"><span class="mini-chip">ops-team</span><span class="mini-chip">priya</span></span></td>
+              <td><span class="chip-set"><span class="mini-chip">deploy-key</span><span class="mini-chip">root-pw</span></span></td>
+              <td><span class="pill ok">reachable</span></td>
+              <td style="text-align:right"><button class="ibtn" title="Edit host" aria-label="Edit host">✎</button></td>
+            </tr>
+            <tr>
+              <td><b>db-primary</b></td><td class="mono">10.20.8.5</td><td class="mut">databases</td>
+              <td><span class="chip-set"><span class="mini-chip">dba-group</span><span class="mini-chip">arun</span><span class="mini-chip">Admin</span></span></td>
+              <td><span class="chip-set"><span class="mini-chip">dba-key</span><span class="mini-chip">postgres-pw</span><span class="mini-chip">backup-key</span></span></td>
+              <td><span class="pill ok">reachable</span></td>
+              <td style="text-align:right"><button class="ibtn" title="Edit host" aria-label="Edit host">✎</button></td>
+            </tr>
+            <tr>
+              <td><b>db-replica</b></td><td class="mono">10.20.8.6</td><td class="mut">databases</td>
+              <td><span class="chip-set"><span class="mini-chip">dba-group</span></span></td>
+              <td><span class="chip-set"><span class="mini-chip">dba-key</span></span></td>
+              <td><span class="pill warn">degraded</span></td>
+              <td style="text-align:right"><button class="ibtn" title="Edit host" aria-label="Edit host">✎</button></td>
+            </tr>
+            <tr>
+              <td><b>legacy-app</b></td><td class="mono">10.20.9.40</td><td class="mut">legacy</td>
+              <td><span class="chip-set"><span class="mini-chip">Admin</span></span></td>
+              <td><span class="chip-set"><span class="mini-chip">root-pw</span></span></td>
+              <td><span class="pill bad">unreachable</span></td>
+              <td style="text-align:right"><button class="ibtn" title="Edit host" aria-label="Edit host">✎</button></td>
+            </tr>
+          </tbody>
+        </table></div></div>
+        <p class="subtitle" style="margin-top:12px">Clicking a user/credential chip edits the allowance in place; ✎ opens the full host sheet (address, zone, gateway, tags).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ TERMINAL ══ -->
+<section class="screen" id="s-term">
+  <div class="frame">
+    <div class="main">
+      <div class="top">
+        <span class="crumb">SeyalRun / Sessions / web-01</span>
+        <span class="spacer"></span>
+        <span class="rec">REC</span>
+        <span class="pill ok">policy: default-allow</span>
+        <button class="btn">End session</button>
+      </div>
+      <div class="body">
+        <h2 class="large-title">web-01 <span class="mut" style="font-size:15px;font-weight:500">· priya · 12 min</span></h2>
+        <p class="subtitle">Terminal keeps its own dark canvas in both themes — it is the one deliberately theme-fixed surface.</p>
+        <div class="term">
+          <div class="bar">
+            <span class="dots"><i style="background:#F07575"></i><i style="background:#E0A63C"></i><i style="background:#4CC482"></i></span>
+            ssh · web-01 (10.20.4.11) · deploy@web-01
+            <span style="margin-left:auto" class="mono">80×24</span>
+          </div>
+          <pre><span class="p1">deploy@web-01</span>:<span class="p2">~</span>$ systemctl status nginx
+<span class="dim">●</span> nginx.service - A high performance web server
+     Active: <span class="p1">active (running)</span> since Sat 2026-07-04 16:22:10 UTC
+   Main PID: 1281 (nginx)
+      Tasks: 5 (limit: 4620)
+
+<span class="p1">deploy@web-01</span>:<span class="p2">~</span>$ sudo rm -rf /var/log/nginx
+<span style="color:#F07575">✗ blocked by command filter “protect-logs” — this action was recorded</span>
+<span class="p1">deploy@web-01</span>:<span class="p2">~</span>$ ▊</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ SETTINGS ══ -->
+<section class="screen" id="s-settings">
+  <div class="frame">
+    <aside class="set-rail">
+      <div class="search">⌕ Search settings…</div>
+      <div class="set-h">Access</div>
+      <div class="set-i"><span class="sic" style="background:#5B8DEF">◉</span> Users &amp; Roles</div>
+      <div class="set-i on"><span class="sic" style="background:#D64545">⌘</span> Command ACL</div>
+      <div class="set-i"><span class="sic" style="background:#7A5AF0">⛨</span> Login ACLs</div>
+      <div class="set-i"><span class="sic" style="background:#C98A1B">🔑</span> Credentials</div>
+      <div class="set-i"><span class="sic" style="background:#4A5568">🛡</span> Security</div>
+      <div class="set-h">Operations</div>
+      <div class="set-i"><span class="sic" style="background:#2FA463">⏱</span> Schedules (crontab)</div>
+      <div class="set-i"><span class="sic" style="background:#356AC3">☁</span> Backup &amp; Retention</div>
+      <div class="set-i"><span class="sic" style="background:#8A6D3B">≣</span> Log Backend</div>
+      <div class="set-i"><span class="sic" style="background:#556" >🧹</span> Housekeeping</div>
+      <div class="set-h">Monitoring</div>
+      <div class="set-i"><span class="sic" style="background:#1FA294">∿</span> Metrics config</div>
+      <div class="set-i"><span class="sic" style="background:#B0413E">Z</span> Zabbix Integration</div>
+      <div class="set-i"><span class="sic" style="background:#2F855A">♥</span> Health</div>
+    </aside>
+    <div class="main">
+      <div class="top">
+        <span class="crumb">SeyalRun / Settings / Command ACL</span>
+        <span class="spacer"></span>
+        <button class="cmdk" onclick="openPal()">⌕ Search or jump to… <kbd>⌘K</kbd></button>
+        <button class="btn primary">+ New filter</button>
+      </div>
+      <div class="set-pane">
+        <h2 class="large-title">Command ACL</h2>
+        <p class="subtitle">Filters run top-down per session; the first match wins. Blocked commands are killed on the remote line and recorded.</p>
+        <div class="row-card">
+          <div class="srow">
+            <span class="grow"><b>protect-logs</b><span class="desc">deny&nbsp;&nbsp;<span class="mono">rm -rf /var/log*</span> · applies to all hosts</span></span>
+            <span class="pill bad">deny</span><span class="switch on" role="switch" aria-checked="true" onclick="this.classList.toggle('on')"></span>
+          </div>
+          <div class="srow">
+            <span class="grow"><b>no-package-changes</b><span class="desc">deny&nbsp;&nbsp;<span class="mono">(apt|yum|dnf) (install|remove)</span> · role: user, guest</span></span>
+            <span class="pill bad">deny</span><span class="switch on" role="switch" aria-checked="true" onclick="this.classList.toggle('on')"></span>
+          </div>
+          <div class="srow">
+            <span class="grow"><b>allow-service-restarts</b><span class="desc">allow&nbsp;&nbsp;<span class="mono">systemctl (restart|reload) *</span> · group: ops</span></span>
+            <span class="pill ok">allow</span><span class="switch on" role="switch" aria-checked="true" onclick="this.classList.toggle('on')"></span>
+          </div>
+          <div class="srow">
+            <span class="grow"><b>legacy-freeze</b><span class="desc">deny&nbsp;&nbsp;<span class="mono">*</span> on <span class="mono">legacy-app</span> · disabled while migration runs</span></span>
+            <span class="pill idle">off</span><span class="switch" role="switch" aria-checked="false" onclick="this.classList.toggle('on')"></span>
+          </div>
+        </div>
+        <p class="subtitle" style="margin-top:14px">Default action for unmatched commands: <b style="color:var(--ink)">allow &amp; record</b> · <span class="mono">audited</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ LOGIN ══ -->
+<section class="screen" id="s-login">
+  <div class="login-stage">
+    <div class="login-card">
+      <span class="bolt">⚡</span>
+      <h2>SeyalRun</h2>
+      <p>DevOps Console</p>
+      <div class="field"><label>Username</label><input value="Admin" readonly></div>
+      <div class="field"><label>Password</label><input type="password" value="········" readonly></div>
+      <button class="btn primary">Sign in</button>
+      <div class="notice">First sign-in uses the default password — you’ll set your own before anything else unlocks.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ DESIGN SYSTEM ══ -->
+<section class="screen ds" id="s-ds">
+  <h2>Palette</h2>
+  <p>Neutral graphite ground with one working accent. Status colors are reserved for state and never used decoratively. Chart hues are validated per theme (lightness band, chroma, CVD separation, contrast).</p>
+  <div class="sw-row">
+    <div class="sw"><i style="background:var(--ground);border-bottom:1px solid var(--hairline)"></i><b>ground</b><span>#F6F7F9 / #101216</span></div>
+    <div class="sw"><i style="background:var(--surface);border-bottom:1px solid var(--hairline)"></i><b>surface</b><span>#FFFFFF / #17191F</span></div>
+    <div class="sw"><i style="background:var(--accent)"></i><b>accent</b><span>#2E6BE6 / #5C8DFF</span></div>
+    <div class="sw"><i style="background:var(--good)"></i><b>good</b><span>#2FA463 / #4CC482</span></div>
+    <div class="sw"><i style="background:var(--warn)"></i><b>warn</b><span>#C98A1B / #E0A63C</span></div>
+    <div class="sw"><i style="background:var(--bad)"></i><b>critical</b><span>#D64545 / #F07575</span></div>
+    <div class="sw"><i style="background:var(--chart-2)"></i><b>chart-2</b><span>#1FA294 / #1A9384</span></div>
+  </div>
+
+  <h2>Type</h2>
+  <p>System stack only (SF on Apple hardware) — zero font bytes, instant first paint, native rendering on every OS. Monospace is reserved for machine values: IPs, hashes, terminal.</p>
+  <div class="type-scale">
+    <div style="font-size:28px;font-weight:700;letter-spacing:-0.022em">Large title — 28/700, −0.022em<small>page headers, macOS-style</small></div>
+    <div style="font-size:17px;font-weight:700;letter-spacing:-0.015em">Section — 17/700<small>card groups, admin sections</small></div>
+    <div style="font-size:14px">Body — 14/400 · <b>emphasis 650</b><small>tables, forms, prose</small></div>
+    <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase">Label — 11/700, +0.06em caps<small>stat keys, column headers</small></div>
+    <div class="mono" style="font-size:12.5px">mono — ui-monospace 12.5<small>IPs · tokens · terminal · tabular-nums everywhere numbers align</small></div>
+  </div>
+
+  <h2>Engineering notes — why it’s fast</h2>
+  <ul>
+    <li><b>No new framework.</b> Same Vue 3 + Pinia + hash router; this is a skin + component pass. Backend untouched.</li>
+    <li><b>Zero font downloads.</b> System stack; the biggest render-blocking asset class is simply gone.</li>
+    <li><b>Route-level code splitting.</b> Terminal (xterm) and playback bundles load only when opened — dashboard TTI drops.</li>
+    <li><b>Virtualized tables</b> for hosts/sessions/audit past ~100 rows; hover states via CSS only.</li>
+    <li><b>Materials in CSS.</b> Translucency is <span class="mono">backdrop-filter</span>; shadows are two layers max; no images.</li>
+    <li><b>Motion budget.</b> 120–180 ms ease-out on interaction only; honors <span class="mono">prefers-reduced-motion</span>.</li>
+    <li><b>⌘K command palette</b> — jump to any host, run a playbook, open a session; the keyboard is the fastest UI.</li>
+    <li><b>Skeletons, not spinners</b> — perceived speed on the dashboard’s 15-query payload.</li>
+  </ul>
+</section>
+
+<!-- ══ COMMAND PALETTE ══ -->
+<div class="veil" id="veil" onclick="if(event.target===this)closePal()">
+  <div class="palette" role="dialog" aria-label="Command palette">
+    <input placeholder="Search hosts, playbooks, sessions…" id="palIn">
+    <div class="sec">Jump to</div>
+    <div class="pi sel"><span class="ic">🖥</span> web-01 <span class="mut" style="font-size:12px">10.20.4.11</span><kbd>↵</kbd></div>
+    <div class="pi"><span class="ic">🖥</span> db-primary <span class="mut" style="font-size:12px">10.20.8.5</span></div>
+    <div class="sec">Actions</div>
+    <div class="pi"><span class="ic">⌁</span> New SSH session…<kbd>⌘T</kbd></div>
+    <div class="pi"><span class="ic">▶</span> Run playbook…<kbd>⌘R</kbd></div>
+    <div class="pi"><span class="ic">◉</span> Invite user…</div>
+    <div class="pi" onclick="closePal();goSettings()"><span class="ic">⚙</span> Open Settings…<kbd>⌘,</kbd></div>
+    <div class="ft"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+  </div>
+</div>
+
+<script>
+// Tabs
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === 's-' + t.dataset.s));
+}));
+
+// Theme toggle — stamps data-theme on root (mirrors the host toggle behavior)
+document.getElementById('themeBtn').addEventListener('click', () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme ? r.dataset.theme === 'dark'
+    : matchMedia('(prefers-color-scheme: dark)').matches;
+  r.dataset.theme = dark ? 'light' : 'dark';
+});
+
+// Chart data: 7 days × (jobs, sessions)
+const days = ['Jun 29','Jun 30','Jul 1','Jul 2','Jul 3','Jul 4','Jul 5'];
+const jobs = [9, 14, 11, 17, 8, 21, 17];
+const sess = [4,  6,  5,  9, 3, 11,  7];
+const max = Math.max(...jobs, ...sess);
+const chart = document.getElementById('chart'), xl = document.getElementById('xlab');
+days.forEach((d, i) => {
+  const g = document.createElement('div'); g.className = 'day';
+  g.innerHTML = `<span class="tip">${d} · ${jobs[i]} jobs · ${sess[i]} sessions</span>` +
+    `<div class="bar jobs" style="height:${(jobs[i]/max)*100}%"></div>` +
+    `<div class="bar sess" style="height:${(sess[i]/max)*100}%"></div>`;
+  chart.appendChild(g);
+  const s = document.createElement('span'); s.textContent = d.split(' ')[1]; xl.appendChild(s);
+});
+
+// Settings
+function goSettings(){
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x.dataset.s === 'settings'));
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === 's-settings'));
+}
+
+// Command palette
+const veil = document.getElementById('veil');
+function openPal(){ veil.classList.add('on'); document.getElementById('palIn').focus(); }
+function closePal(){ veil.classList.remove('on'); }
+addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPal(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); closePal(); goSettings(); }
+  if (e.key === 'Escape') closePal();
+});
+</script>

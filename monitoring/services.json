@@ -1,0 +1,64 @@
+{
+  "services": [
+    {
+      "name": "edge-proxy",
+      "health_url": "http://edge-proxy:8080/health",
+      "metrics_url": null,
+      "log_path": null
+    },
+    {
+      "name": "api-gateway",
+      "health_url": "http://api-gateway:8000/health",
+      "metrics_url": "http://api-gateway:8000/metrics",
+      "log_path": "/var/log/seyalrun/api-gateway.jsonl"
+    },
+    {
+      "name": "identity-service",
+      "health_url": "http://identity-service:8101/health",
+      "metrics_url": "http://identity-service:8101/metrics",
+      "log_path": "/var/log/seyalrun/identity-service.jsonl"
+    },
+    {
+      "name": "inventory-service",
+      "health_url": "http://inventory-service:8102/health",
+      "metrics_url": "http://inventory-service:8102/metrics",
+      "log_path": "/var/log/seyalrun/inventory-service.jsonl"
+    },
+    {
+      "name": "terminal-service",
+      "health_url": "http://terminal-service:8103/health",
+      "metrics_url": "http://terminal-service:8103/metrics",
+      "log_path": "/var/log/seyalrun/terminal-service.jsonl"
+    },
+    {
+      "name": "recording-service",
+      "health_url": "http://recording-service:8104/health",
+      "metrics_url": "http://recording-service:8104/metrics",
+      "log_path": "/var/log/seyalrun/recording-service.jsonl"
+    },
+    {
+      "name": "automation-service",
+      "health_url": "http://automation-service:8105/health",
+      "metrics_url": "http://automation-service:8105/metrics",
+      "log_path": "/var/log/seyalrun/automation-service.jsonl"
+    },
+    {
+      "name": "zabbix-integration-service",
+      "health_url": "http://zabbix-integration-service:8106/health",
+      "metrics_url": "http://zabbix-integration-service:8106/metrics",
+      "log_path": "/var/log/seyalrun/zabbix-integration-service.jsonl"
+    },
+    {
+      "name": "metrics-service",
+      "health_url": "http://metrics-service:8107/health",
+      "metrics_url": "http://metrics-service:8107/metrics",
+      "log_path": "/var/log/seyalrun/metrics-service.jsonl"
+    },
+    {
+      "name": "frontend",
+      "health_url": "http://frontend:8080/health",
+      "metrics_url": null,
+      "log_path": null
+    }
+  ]
+}
