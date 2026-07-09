@@ -2,9 +2,7 @@
 
 SeyalRun-zabbix is a ground-up microservices rewrite of the SeyalRun DevOps
 console: a PAM (Privileged Access Management) layer for SSH-managed hosts,
-embeddable as an iframe inside Zabbix, with full JumpServer-style feature
-parity on the roadmap. v1 (the JumpServer-fork-based build) remains
-available separately on `release/v1.0`.
+embeddable as an iframe inside Zabbix.
 
 ## Quick Deploy
 
@@ -96,44 +94,6 @@ by both paths.
   edge-proxy) that fans out to every service's `/health` and `/metrics` —
   no sidecar container and no Docker-socket exposure.
 
-## Repo layout
-
-```
-.env.example                 # full env var reference — copy to .env
-docker-compose.yml           # redis, identity, inventory, api-gateway, frontend,
-                              # edge-proxy
-docker-compose.db.yml        # OPTIONAL overlay: Dockerized postgres/mysql for
-                              # users without a bare-metal DB
-docker-init/                 # init scripts for docker-compose.db.yml
-schema/postgres/schema.sql   # Phase-1 schema (Postgres dialect)
-schema/mysql/schema.sql      # Phase-1 schema (MySQL dialect)
-libs/
-  dbcore/                     # dual-DB SQLAlchemy engine/session + AES-256-GCM crypto
-  servicetoken/               # HS256 service-to-service JWT helper
-  securelog/                  # structured logging with secret redaction
-  pluginbase/                 # ABCs: IdentityProvider, CredentialKind,
-                              # CommandFilterMatcher, ActionExecutor, TriggerSource
-services/
-  edge-proxy/                 # nginx, TLS termination
-  api-gateway/                # FastAPI BFF
-  identity-service/           # users/groups, PAM authz, command filters,
-                              # login ACLs, PATs, audit log
-  inventory-service/          # hosts, host groups, credentials + templates,
-                              # zones/gateways
-  frontend/                   # Vue 3 + Vite SPA
-monitoring/
-  template-source.yaml         # SeyalRun Platform Zabbix template (source of truth)
-  zabbix-templates/7.0/        # generated — import as-is into Zabbix 7.0
-  zabbix-templates/8.0/        # generated — import as-is into Zabbix 8.0
-  services.json                # service registry consumed by the monitor endpoint
-ops/
-  init-db.sh                   # create + import schema on a bare-metal DB
-  backup-db.sh                 # pg_dump/mysqldump
-  rotate-vault-key.sh           # re-encrypt za_credentials under a new vault key
-  render-zabbix-templates.sh    # regenerate monitoring/zabbix-templates/{7.0,8.0}
-  deploy-staging.sh              # rsync + build + migrate + seed + verify
-  verify-staging.sh               # ✓/✗ post-deploy checklist
-```
 
 ## Quickstart
 
@@ -254,9 +214,3 @@ payload — one HTTP request per interval, regardless of service count.
    service. Error-log tailing (an agent-only capability) was retired with
    the sidecar — 5xx rates from `/metrics` cover the alerting need.
 
-Regenerate both template versions after editing
-`monitoring/template-source.yaml`:
-
-```sh
-ops/render-zabbix-templates.sh
-```
