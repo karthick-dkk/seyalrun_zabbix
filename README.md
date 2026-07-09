@@ -4,6 +4,8 @@ SeyalRun-zabbix is a ground-up microservices rewrite of the SeyalRun DevOps
 console: a PAM (Privileged Access Management) layer for SSH-managed hosts,
 embeddable as an iframe inside Zabbix.
 
+<img width="2834" height="1630" alt="image" src="https://github.com/user-attachments/assets/68872c8c-c21c-4da1-a950-c42e9ea68190" />
+
 ## Quick Deploy
 
 Pulls prebuilt images from Docker Hub (`docker.io/karthickdk02/seyalrun-*`) —
