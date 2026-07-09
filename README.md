@@ -1,6 +1,6 @@
-# SeyalRun v2.0
+# SeyalRun Zabbix
 
-SeyalRun v2 is a ground-up microservices rewrite of the SeyalRun DevOps
+SeyalRun-zabbix is a ground-up microservices rewrite of the SeyalRun DevOps
 console: a PAM (Privileged Access Management) layer for SSH-managed hosts,
 embeddable as an iframe inside Zabbix, with full JumpServer-style feature
 parity on the roadmap. v1 (the JumpServer-fork-based build) remains
