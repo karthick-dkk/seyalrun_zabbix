@@ -7,7 +7,7 @@ set -e
 
 for db in "${INVENTORY_DB_NAME}" "${TERMINAL_DB_NAME}" "${AUTOMATION_DB_NAME}"; do
   [ -n "$db" ] || continue
-  psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
+  psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
     SELECT 'CREATE DATABASE "${db}"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${db}')\gexec
 EOSQL
 done
