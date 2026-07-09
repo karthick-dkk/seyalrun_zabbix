@@ -28,3 +28,4 @@ web-search-mcp/
 # design notes, test-case docs, etc. don't belong in the public repo).
 *.md
 !README.md
+docs/designs/
