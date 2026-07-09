@@ -36,8 +36,8 @@
         <button class="btn btn-primary btn-sm" @click="openCreateFilter">+ Command Filter</button>
       </div>
       <div style="padding:10px 16px;font-size:12px;color:var(--text2);border-bottom:1px solid var(--border)">
-        Enforcement: coming in Phase 2. Filters can be configured now and will be enforced by the
-        terminal service once SSH sessions are introduced.
+        Enforced live by the terminal service on every command typed in an SSH session.
+        Principal/Target "Any" means the rule applies to every user and every host.
       </div>
       <table class="table">
         <thead>
@@ -85,8 +85,7 @@
         <button class="btn btn-primary btn-sm" @click="openCreateAcl">+ Login ACL</button>
       </div>
       <div style="padding:10px 16px;font-size:12px;color:var(--text2);border-bottom:1px solid var(--border)">
-        Enforcement: coming in Phase 2. Login ACLs can be configured now and will be enforced by the
-        gateway and terminal service once SSH sessions are introduced.
+        Enforced live by the terminal service when an SSH session is requested.
       </div>
       <table class="table">
         <thead>

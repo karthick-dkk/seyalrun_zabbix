@@ -146,7 +146,15 @@ async def internal_command_filters(
     group_result = await session.execute(select(ZAUserGroupMember.group_id).where(ZAUserGroupMember.user_id == user_id))
     group_ids = [g for (g,) in group_result.all()]
 
-    conditions = (ZACommandFilter.user_id == user_id) | (ZACommandFilter.user_group_id.in_(group_ids or [""]))
+    # A filter with NO user_id/user_group_id set ("Principal: Any" in the UI) is meant
+    # to apply to every caller — but SQL's `=` never matches a NULL column, so without
+    # this explicit branch such filters were silently never returned to ANYONE (a false
+    # sense of security: shown as "Enabled" in the admin UI, enforced for no one).
+    conditions = (
+        (ZACommandFilter.user_id == user_id)
+        | (ZACommandFilter.user_group_id.in_(group_ids or [""]))
+        | (ZACommandFilter.user_id.is_(None) & ZACommandFilter.user_group_id.is_(None))
+    )
     result = await session.execute(
         select(ZACommandFilter).where(ZACommandFilter.enabled.is_(True), conditions).order_by(ZACommandFilter.priority.desc())
     )
@@ -189,7 +197,13 @@ async def login_acls_check(
     )
     group_ids = [g for (g,) in group_result.all()]
 
-    conditions = (ZALoginAcl.user_id == user_id) | (ZALoginAcl.user_group_id.in_(group_ids or [""]))
+    # Same NULL-comparison gap as command filters above: a rule with no
+    # user_id/user_group_id ("Principal: Any") must still match every caller.
+    conditions = (
+        (ZALoginAcl.user_id == user_id)
+        | (ZALoginAcl.user_group_id.in_(group_ids or [""]))
+        | (ZALoginAcl.user_id.is_(None) & ZALoginAcl.user_group_id.is_(None))
+    )
     result = await session.execute(
         select(ZALoginAcl)
         .where(ZALoginAcl.enabled.is_(True), conditions)
