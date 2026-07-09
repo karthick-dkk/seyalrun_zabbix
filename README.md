@@ -20,6 +20,7 @@ self-signed TLS cert, brings up a Dockerized Postgres, runs migrations, seeds
 the superadmin account, and starts every service. Takes a few minutes on
 first run (image pulls); safe to re-run (an existing `.env`/cert/database is
 reused, not overwritten).
+<img width="2842" height="1622" alt="image" src="https://github.com/user-attachments/assets/1ca5e5cf-fad5-4964-8224-0ac56c62bff8" />
 
 Every choice has a default and can be overridden by exporting a variable
 before running the command above:
