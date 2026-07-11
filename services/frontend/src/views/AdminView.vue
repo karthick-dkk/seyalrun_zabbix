@@ -28,6 +28,7 @@
       <AutomationAdmin v-else-if="section === 'automation'" />
       <ZabbixIntegrationAdmin v-else-if="section === 'zabbix-integration'" />
       <IntegrationAdmin v-else-if="section === 'integration'" />
+      <PlatformSettingsAdmin v-else-if="section === 'platform'" />
       <HealthAdmin v-else-if="section === 'health'" />
       <HousekeepingAdmin v-else-if="section === 'housekeeping'" />
       <LogBackendAdmin v-else-if="section === 'log-backend'" />
@@ -49,6 +50,7 @@ import SecurityAdmin from './admin/SecurityAdmin.vue'
 import AutomationAdmin from './admin/AutomationAdmin.vue'
 import ZabbixIntegrationAdmin from './admin/ZabbixIntegrationAdmin.vue'
 import IntegrationAdmin from './admin/IntegrationAdmin.vue'
+import PlatformSettingsAdmin from './admin/PlatformSettingsAdmin.vue'
 import HealthAdmin from './admin/HealthAdmin.vue'
 import HousekeepingAdmin from './admin/HousekeepingAdmin.vue'
 import LogBackendAdmin from './admin/LogBackendAdmin.vue'
@@ -74,6 +76,7 @@ const GROUPS = [
     { area: 'admin.automation', to: '/admin/automation', label: 'Automation' },
     { area: 'admin.zabbix-integration', to: '/admin/zabbix-integration', label: 'Zabbix Integration' },
     { area: 'admin.integration', to: '/admin/integration', label: 'Integration' },
+    { area: 'admin.platform', to: '/admin/platform', label: 'SeyalRun Settings' },
   ] },
   { label: 'Platform', tabs: [
     { area: 'admin.health', to: '/admin/health', label: 'Health' },

@@ -1,0 +1,53 @@
+{
+    "manifest_version": 2.0,
+    "id": "seyalrun",
+    "name": "SeyalRun",
+    "version": "1.0.0",
+    "namespace": "SeyalRun",
+    "author": "SeyalRun",
+    "url": "https://github.com/karthick-dkk/seyalrun_zabbix",
+    "description": "Embeds SeyalRun (SSH privileged access management) inside Zabbix: a Dashboard/Assets/Sessions/Jobs/Automation/Trigger-Bindings menu, a permission-aware SSH-Hosts page, and a Settings page under Administration.",
+    "actions": {
+        "seyalrun.dashboard": {
+            "class": "Dashboard",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.assets": {
+            "class": "Assets",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.hosts": {
+            "class": "Hosts",
+            "view": "seyalrun.hosts",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.sessions": {
+            "class": "Sessions",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.jobs": {
+            "class": "Jobs",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.automation": {
+            "class": "Automation",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.bindings": {
+            "class": "Bindings",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.settings": {
+            "class": "Settings",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        }
+    },
+    "config": {}
+}

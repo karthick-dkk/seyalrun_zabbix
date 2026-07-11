@@ -15,6 +15,7 @@ from libs.securelog import configure_logging
 from libs.servicetoken import mint
 
 from . import http as _http
+from . import platform_settings
 from . import rbac
 from .collectors import background_metric_refresh
 from .config import get_settings
@@ -37,8 +38,15 @@ configure_logging(settings.service_name, settings.log_level, settings.log_path)
 
 _refresh_task: asyncio.Task | None = None
 _roles_task: asyncio.Task | None = None
+_settings_task: asyncio.Task | None = None
 import logging as _logging
 _log = _logging.getLogger(__name__)
+
+
+async def _platform_settings_refresh_loop() -> None:
+    while True:
+        await platform_settings.refresh()
+        await asyncio.sleep(40)
 
 
 async def _load_role_perms() -> None:
@@ -61,16 +69,18 @@ async def _roles_refresh_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _refresh_task, _roles_task
+    global _refresh_task, _roles_task, _settings_task
     _refresh_task = asyncio.create_task(
         background_metric_refresh(settings.redis_url, settings.metrics_refresh_interval_seconds)
     )
     await _load_role_perms()   # warm the RBAC cache before serving traffic
     _roles_task = asyncio.create_task(_roles_refresh_loop())
+    await platform_settings.refresh()   # warm the platform-settings cache too
+    _settings_task = asyncio.create_task(_platform_settings_refresh_loop())
     try:
         yield
     finally:
-        for task in (_refresh_task, _roles_task):
+        for task in (_refresh_task, _roles_task, _settings_task):
             if task:
                 task.cancel()
                 try:
@@ -92,8 +102,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Endpoints reachable without a session JWT or PAT.
-_PUBLIC_PATHS = {"auth/login", "auth/sso-exchange"}
+# Endpoints reachable without a session JWT or PAT. auth/zbx-sso-init is the Zabbix
+# module's own entry point (HMAC-authenticated inside identity-service, not by a
+# SeyalRun session) — it must be reachable before any SeyalRun login exists.
+_PUBLIC_PATHS = {"auth/login", "auth/sso-exchange", "auth/zbx-sso-init"}
 
 _metrics = ServiceMetrics()
 app.middleware("http")(_metrics.middleware)
@@ -383,7 +395,16 @@ async def gateway(path: str, request: Request):
 
     client_ip = request.client.host if request.client else "unknown"
     rate_key = f"{client_ip}:{identity['user_id'] if identity else 'anon'}"
-    allowed = await check_rate_limit(redis_client, rate_key, settings.rate_limit_requests, settings.rate_limit_window_seconds)
+    # Elevated bucket for trusted, module-originated traffic — auth/zbx-sso-init is the
+    # only endpoint the Zabbix module itself calls (every other embedded-page call comes
+    # from the end user's own browser session and stays on the ordinary per-user limit);
+    # a configured trusted IP is an additional, optional signal for future module traffic.
+    is_module_traffic = platform_settings.zabbix_module_enabled() and (
+        path == "auth/zbx-sso-init" or client_ip in platform_settings.zabbix_module_trusted_ips()
+    )
+    rate_limit = platform_settings.zabbix_module_elevated_rate_limit() if is_module_traffic \
+        else platform_settings.rate_limit_requests()
+    allowed = await check_rate_limit(redis_client, rate_key, rate_limit, platform_settings.rate_limit_window_seconds())
     if not allowed:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate limit exceeded")
 
@@ -410,7 +431,7 @@ async def gateway(path: str, request: Request):
             response.set_cookie(
                 key=SESSION_COOKIE_NAME, value=token,
                 httponly=True, secure=True, samesite="lax",
-                max_age=settings.session_absolute_hours * 3600,
+                max_age=platform_settings.session_absolute_hours() * 3600,
                 path="/",
             )
 

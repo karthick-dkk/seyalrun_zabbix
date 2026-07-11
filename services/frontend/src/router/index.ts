@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { setToken } from '@/api/client'
 
-export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'automation', 'zabbix-integration', 'integration', 'health', 'housekeeping', 'log-backend']
+export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'automation', 'zabbix-integration', 'integration', 'platform', 'health', 'housekeeping', 'log-backend']
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -59,6 +59,10 @@ const router = createRouter({
       path: '/sessions/:id',
       name: 'session-playback',
       component: () => import('@/views/SessionPlaybackView.vue'),
+    },
+    {
+      path: '/dashboard',
+      redirect: '/',
     },
     {
       path: '/recordings',

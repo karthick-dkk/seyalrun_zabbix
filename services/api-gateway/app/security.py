@@ -14,6 +14,7 @@ import redis.asyncio as redis
 from libs.servicetoken import mint
 
 from . import http as _http
+from . import platform_settings
 from .config import get_settings
 from .redis_client import redis_client
 
@@ -98,7 +99,6 @@ async def lookup_session(token: str) -> dict:
     no self-contained fallback once the token carries no claims of its own) —
     a RedisError propagates as AuthError, not a silent allow-through.
     """
-    settings = get_settings()
     key = f"{SESSION_PREFIX}{token}"
     try:
         raw = await redis_client.get(key)
@@ -111,14 +111,17 @@ async def lookup_session(token: str) -> dict:
     except (TypeError, ValueError) as exc:
         raise AuthError("corrupt session") from exc
 
+    # DB-tunable (superadmin Settings page), .env fallback — see platform_settings.py.
+    # Both idle and absolute are computed fresh on every lookup (not baked in at
+    # creation), so a tightened limit applies immediately to sessions already in flight.
     now = int(time.time())
     created_at = int(blob.get("created_at", now))
-    absolute_deadline = created_at + settings.session_absolute_hours * 3600
+    absolute_deadline = created_at + platform_settings.session_absolute_hours() * 3600
     if now >= absolute_deadline:
         await redis_client.delete(key)
         raise AuthError("session expired")
 
-    new_expires_at = min(now + settings.session_idle_minutes * 60, absolute_deadline)
+    new_expires_at = min(now + platform_settings.session_idle_minutes() * 60, absolute_deadline)
     blob["last_seen_at"] = now
     await redis_client.set(key, json.dumps(blob), ex=max(new_expires_at - now, 1))
 
