@@ -17,10 +17,21 @@
  * Zabbix-version-specific module-config storage APIs.)
  */
 return [
-	// SeyalRun's own base URL, reachable from wherever PHP runs for this Zabbix
-	// frontend (a server-side curl call) — usually the same URL a browser would
-	// use, but can differ if Zabbix and SeyalRun sit on different internal networks.
+	// SeyalRun's base URL as reached by THIS SERVER's own PHP process (the
+	// server-side curl call that mints an SSO code). On a single-host test
+	// deployment this can legitimately be https://127.0.0.1:8443 — that
+	// address only has to make sense from the Zabbix server's point of view.
 	'seyalrun_url' => 'https://seyalrun.example.com',
+
+	// SeyalRun's base URL as reached by the VISITOR'S BROWSER — used for the
+	// iframe src and the SSH Hosts "Terminal" links. This MUST be an address
+	// your browser can actually resolve and connect to, e.g. the box's real
+	// IP/hostname. Optional: if omitted, falls back to seyalrun_url above —
+	// only safe when that's a real hostname/IP already reachable by browsers
+	// too, not a loopback address. Get this wrong and pages mint a valid SSO
+	// code server-side but still render as a blank/broken iframe, because the
+	// browser tries to load its OWN 127.0.0.1, not this server's.
+	'seyalrun_public_url' => 'https://seyalrun.example.com',
 
 	// Must match ZABBIX_MODULE_SECRET in SeyalRun's .env. Generate a strong random
 	// value once, e.g.: openssl rand -hex 32

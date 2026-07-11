@@ -33,6 +33,14 @@ class Module extends CoreModule {
 		$main_menu->insertAfter(_('Monitoring'),
 			(new CMenuItem(_('SeyalRun')))
 				->setId('seyalrun')
+				// zi-command — Zabbix's own "run a remote command" glyph, from the
+				// same icon font as every other top-level item (zi-monitoring,
+				// zi-services, ...), so it renders at native size/style automatically.
+				// No SeyalRun-specific icon exists in Zabbix's set; this is the
+				// closest fit for an SSH/command-execution tool. See
+				// include/defines.inc.php for the full ZBX_ICON_* list if you'd
+				// rather pick a different one.
+				->setIcon(ZBX_ICON_COMMAND)
 				->setSubMenu(new CMenu([
 					(new CMenuItem(_('Dashboard')))->setAction('seyalrun.dashboard'),
 					(new CMenuItem(_('Assets')))->setAction('seyalrun.assets'),

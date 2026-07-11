@@ -1,6 +1,10 @@
 <template>
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg)">
-    <div style="width:360px">
+    <!-- Zabbix SSO exchange is a single fast round trip (~100ms) — the ENTIRE
+         branding block + card is gated off during it, not just the card body,
+         so nothing (not even the logo) flashes on a normal embedded page
+         transition. Only the plain background shows for that brief window. -->
+    <div v-if="!ssoLoading" style="width:360px">
       <div style="text-align:center;margin-bottom:32px">
         <div style="font-size:48px;margin-bottom:8px">⚡</div>
         <h1 style="font-size:24px;font-weight:700;color:var(--text)">SeyalRun</h1>
@@ -8,10 +12,7 @@
       </div>
       <div class="card">
         <div class="card-body">
-          <div v-if="ssoLoading" class="picker-status" style="justify-content:center;padding:8px 0 16px">
-            <span class="spinner"></span> Signing in via Zabbix SSO…
-          </div>
-          <template v-else-if="mustChange">
+          <template v-if="mustChange">
             <div style="font-weight:600;color:var(--text);margin-bottom:4px">Set a new password</div>
             <div style="color:var(--text2);font-size:12px;margin-bottom:16px">
               You signed in with the default password. Choose a new one (min 8
@@ -69,16 +70,19 @@ const confirmPassword = ref('')
 
 onMounted(async () => {
   const params = new URLSearchParams(window.location.search)
-  const ssoCode = params.get('sso_code')
-  if (ssoCode) {
-    ssoLoading.value = true
-    try {
-      await auth.exchangeSSO(ssoCode)
-      router.push('/')
-    } catch (e: any) {
-      error.value = e?.response?.data?.detail || 'SSO sign-in failed'
-      ssoLoading.value = false
-    }
+  const code = params.get('sso_code')
+  if (!code) return
+  ssoLoading.value = true
+  try {
+    await auth.exchangeSSO(code)
+    // goIn() honors route.query.redirect — the intended page the guard bounced
+    // here from (e.g. #/assets from the Zabbix module). Landing everyone on '/'
+    // regardless of which SeyalRun page they clicked was the bug: every page
+    // inside Zabbix rendered Dashboard.
+    goIn()
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || 'SSO sign-in failed'
+    ssoLoading.value = false
   }
 })
 

@@ -2,6 +2,38 @@
   <div>
     <div class="card">
       <div class="card-header">
+        Zabbix Integration
+        <button class="btn btn-sm" @click="load">Refresh</button>
+      </div>
+      <div style="padding:18px">
+        <p class="lede">How SeyalRun finds and talks to your Zabbix — the same URL used by the header's "Zabbix" link, host sync, and the webhook result post-back.</p>
+        <div v-if="loading" style="color:var(--text2)">Loading…</div>
+        <template v-else>
+          <div class="fp-field">
+            <label class="fp-label">Zabbix Console URL <span class="hint">(the "Back to Zabbix" link)</span></label>
+            <input v-model="integrationForm.zabbix_console_url" class="fp-input" placeholder="https://zabbix.example.com" />
+          </div>
+          <div class="fp-field">
+            <label class="fp-label">Zabbix API URL <span class="hint">(used for reachability + host sync)</span></label>
+            <input v-model="integrationForm.zabbix_api_url" class="fp-input" placeholder="https://zabbix.example.com" />
+          </div>
+          <div class="fp-field">
+            <label class="fp-label">
+              Zabbix API Token
+              <span class="hint">{{ integrationConfigured ? '· currently configured — leave blank to keep' : '· not set' }}</span>
+            </label>
+            <input v-model="integrationForm.zabbix_api_token" type="password" autocomplete="new-password" class="fp-input" placeholder="leave blank to keep existing" />
+          </div>
+          <div v-if="integrationMsg" class="save-msg" :class="integrationErr ? 'err' : 'ok'">{{ integrationMsg }}</div>
+          <div style="margin-top:12px">
+            <button class="btn btn-primary" :disabled="integrationSaving" @click="saveIntegration">{{ integrationSaving ? 'Saving…' : 'Save' }}</button>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
         Traffic &amp; Session Limits
         <button class="btn btn-sm" @click="load">Refresh</button>
       </div>
@@ -88,6 +120,12 @@ import api from '@/api/client'
 
 const loading = ref(false)
 
+const integrationForm = reactive({ zabbix_console_url: '', zabbix_api_url: '', zabbix_api_token: '' })
+const integrationConfigured = ref(false)
+const integrationSaving = ref(false)
+const integrationMsg = ref('')
+const integrationErr = ref(false)
+
 const platformForm = reactive({
   rate_limit_requests: 600, rate_limit_window_seconds: 60,
   session_idle_minutes: 30, session_absolute_hours: 8, log_level: 'INFO',
@@ -108,14 +146,32 @@ const moduleErr = ref(false)
 async function load() {
   loading.value = true
   try {
-    const [platform, mod] = await Promise.all([
+    const [integration, platform, mod] = await Promise.all([
+      api.get('/settings/integration'),
       api.get('/settings/platform'),
       api.get('/settings/zabbix-module'),
     ])
+    integrationForm.zabbix_console_url = integration.data.zabbix_console_url || ''
+    integrationForm.zabbix_api_url = integration.data.zabbix_api_url || ''
+    integrationForm.zabbix_api_token = ''
+    integrationConfigured.value = !!integration.data.zabbix_api_token_configured
     Object.assign(platformForm, platform.data)
     Object.assign(moduleForm, mod.data)
   } catch { /* keep defaults */ }
   finally { loading.value = false }
+}
+
+async function saveIntegration() {
+  integrationSaving.value = true; integrationMsg.value = ''; integrationErr.value = false
+  try {
+    await api.put('/settings/integration', { ...integrationForm })
+    integrationForm.zabbix_api_token = ''
+    integrationMsg.value = 'Saved.'
+    await load()
+  } catch (e: any) {
+    integrationErr.value = true
+    integrationMsg.value = e?.response?.data?.detail || 'Failed to save settings'
+  } finally { integrationSaving.value = false }
 }
 
 async function savePlatform() {

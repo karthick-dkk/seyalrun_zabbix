@@ -48,11 +48,20 @@ on 2026-07-11 — steps below are what actually worked, not a guess.
 
    ```php
    return [
-       'seyalrun_url' => 'https://seyalrun.example.com',
+       'seyalrun_url' => 'https://seyalrun.example.com',        // reached by THIS SERVER
+       'seyalrun_public_url' => 'https://seyalrun.example.com', // reached by the BROWSER
        'module_secret' => '<same value as ZABBIX_MODULE_SECRET below>',
        'verify_tls' => true,
    ];
    ```
+
+   These two URLs are often the same (a real hostname reachable both ways) but
+   don't have to be — on a single test box it's common for `seyalrun_url` to be
+   `https://127.0.0.1:8443` (fine for this server's own curl calls) while
+   `seyalrun_public_url` has to be the box's real IP/hostname, since that one
+   ends up in the iframe/link URLs your browser actually loads. Getting this
+   backwards is the #1 cause of a page that loads but renders blank — see
+   Troubleshooting below.
 
 3. Set the matching secret on the **SeyalRun** side — in SeyalRun's `.env`:
 
@@ -134,6 +143,8 @@ message, never a shell. Zabbix permissions never bypass SeyalRun's.
 | Modules page shows "Cannot load module at: seyalrun" (or the module silently vanishes from the list) | `relative_path` in the `module` DB row must be `modules/<dir-name>` — root-relative to the Zabbix frontend directory — not just the module's own folder name. Delete and recreate the row (see Install step 5), or fix it via **Scan directory** instead of a raw DB/API insert. |
 | A page 500s with `Call to undefined method ...::disableSIDValidation()` in the PHP log | Older Zabbix versions call this `disableSIDValidation()`; current versions renamed it `disableCsrfValidation()`. Already fixed in this module's `EmbedAction.php`/`Hosts.php` — if you see this, you're running an older copy. |
 | SSH Hosts page 500s with `array_column(): ... null given` on the `groups` field | Zabbix's `host.get` omits the `groups` key entirely (not even an empty array) for a host with zero group memberships on some API versions. Already handled (`$host['groups'] ?? []`) — if you see this, you're running an older copy. |
+| Menu appears, page loads (HTTP 200), but the content area is blank with a broken-page icon | `seyalrun_url` (server-side) and `seyalrun_public_url` (browser-facing) are different addresses on purpose — a valid SSO code minted server-side still renders a broken iframe if `seyalrun_public_url` isn't reachable from the *visitor's* browser (e.g. left as `127.0.0.1`, which means "the viewer's own machine" once it's in the page, not the server). Set `seyalrun_public_url` to the box's real IP/hostname. |
+| Same blank/broken iframe even after `seyalrun_public_url` is correct | Self-signed TLS cert on SeyalRun's edge-proxy — browsers don't show a click-through warning *inside* an iframe, they just fail to load it silently. Open the SeyalRun URL directly in a new tab first, accept the certificate warning once, then reload the Zabbix page — the browser remembers that trust decision for the session. |
 | No **SeyalRun** menu item at all | Module not Enabled under Administration → General → Modules, or the frontend needs a hard refresh/cache clear. |
 | Menu item's pages show "module is not configured yet" | `config.php` missing, or `seyalrun_url`/`module_secret` blank. |
 | Pages show "SeyalRun is unavailable right now" | `seyalrun_url` unreachable from the Zabbix frontend's PHP process (check with `curl` from that host/container), a TLS cert `curl` won't trust (see `verify_tls`), or `module_secret` doesn't match `ZABBIX_MODULE_SECRET` on the SeyalRun side. |

@@ -61,6 +61,10 @@ const router = createRouter({
       component: () => import('@/views/SessionPlaybackView.vue'),
     },
     {
+      path: '/dashboard',
+      redirect: '/',
+    },
+    {
       path: '/recordings',
       redirect: '/sessions',
     },

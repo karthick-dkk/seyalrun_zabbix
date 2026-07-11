@@ -4,25 +4,30 @@ namespace Modules\SeyalRun\Actions;
 
 require_once __DIR__ . '/../lib/SsoClient.php';
 
-use API;
 use CController;
 use CControllerResponseData;
 use CWebUser;
 use Modules\SeyalRun\Lib\SsoClient;
 
 /**
- * Native "SeyalRun · SSH Hosts" page — NOT embedded/iframed; it calls the Zabbix
- * API directly, in-process, the same way any core Zabbix page does.
+ * Native "SeyalRun · SSH Hosts" page — a native Zabbix page (not an iframe) that
+ * shows SeyalRun's OWN host inventory, the same data as SeyalRun's Assets page:
+ * name + source badge (Z synced-from-Zabbix / S SeyalRun-native), address,
+ * platform, host groups, Active/Inactive status, Users count, Credentials
+ * count, and a terminal icon (Linux only, matching the Assets page).
  *
- * `editable => true` restricts host.get to hosts the CURRENT Zabbix user can
- * WRITE — that permission is what decides whether a host appears here at all
- * (visibility). Clicking "Terminal" still goes through SeyalRun's own SSO and
- * PAM authorization + credential gate before it ever opens a shell — Zabbix
- * write access never bypasses that, it only controls this icon's visibility.
+ * Data source: this mints ONE server-side SeyalRun session token
+ * (SsoClient::mintSessionToken — consumed only by this PHP process, never sent
+ * to the browser) as the current Zabbix user, then reads SeyalRun's own
+ * /hosts, /host-groups, /authorizations, /credentials — exactly the endpoints
+ * AssetsView.vue reads client-side, computed here in PHP instead. The host
+ * list is therefore SeyalRun's inventory, PAM-scoped to the SeyalRun user the
+ * Zabbix identity maps to (the gateway filters /hosts for non-admins), NOT
+ * Zabbix's raw host list.
  *
- * Each row mints its own single-use SSO code (see SsoClient) so a link opened
- * in a brand-new tab works even for a Zabbix user who has never separately
- * logged into SeyalRun directly.
+ * Core feature preserved: the terminal icon still deep-links into SeyalRun's
+ * SSH terminal, which still enforces SeyalRun's own authorization + credential
+ * gate — a user without a grant gets a request-access message, never a shell.
  */
 class Hosts extends CController {
 
@@ -43,47 +48,80 @@ class Hosts extends CController {
 		$username = (string) CWebUser::$data['username'];
 		$user_type = (int) CWebUser::$data['type'];
 
-		$hosts = API::Host()->get([
-			'output' => ['hostid', 'name', 'status'],
-			'selectInterfaces' => ['ip', 'dns', 'useip', 'port'],
-			'selectGroups' => ['name'],
-			'selectInventory' => ['os_short'],
-			'editable' => true,
-			'sortfield' => 'name',
-		]);
-
 		$rows = [];
-		foreach ($hosts as $host) {
-			$os = strtolower((string) ($host['inventory']['os_short'] ?? ''));
-			$is_windows = (strpos($os, 'win') !== false);
-			$iface = $host['interfaces'][0] ?? null;
-			$address = $iface ? ($iface['useip'] === '1' ? $iface['ip'] : $iface['dns']) : '';
+		$reachable = false;
 
-			$terminal_url = null;
-			if (!$is_windows && $sso->isConfigured()) {
-				$terminal_url = $sso->buildEmbedUrl(
-					$username, $user_type,
-					'terminal?zbx_host=' . rawurlencode($host['hostid']) . '&autoconnect=1'
-				);
+		if ($sso->isConfigured()) {
+			$token = $sso->mintSessionToken($username, $user_type);
+			if ($token !== null) {
+				$hosts = $sso->get('/api/v1/hosts', $token);
+				if ($hosts !== null) {
+					$reachable = true;
+
+					// group id -> name (best-effort; a plain SeyalRun 'user' role may
+					// not have host-groups read — degrades to no group name, not an error).
+					$group_name = [];
+					foreach (($sso->get('/api/v1/host-groups', $token) ?? []) as $g) {
+						$group_name[$g['id']] = $g['name'];
+					}
+					// Users per host — authorizations keyed by the legacy singular
+					// host_id, mirroring AssetsView.vue's hostAuthzMap exactly so the
+					// count matches Assets for the same host.
+					$users_count = [];
+					foreach (($sso->get('/api/v1/authorizations', $token) ?? []) as $a) {
+						if (!empty($a['host_id'])) {
+							$users_count[$a['host_id']] = ($users_count[$a['host_id']] ?? 0) + 1;
+						}
+					}
+					// Credentials per host — host_ids array, mirroring hostCredMap.
+					$creds_count = [];
+					foreach (($sso->get('/api/v1/credentials', $token) ?? []) as $c) {
+						foreach (($c['host_ids'] ?? []) as $hid) {
+							$creds_count[$hid] = ($creds_count[$hid] ?? 0) + 1;
+						}
+					}
+
+					foreach ($hosts as $h) {
+						$is_windows = (($h['os_type'] ?? 'linux') === 'windows');
+						$groups = [];
+						foreach (($h['group_ids'] ?? []) as $gid) {
+							if (isset($group_name[$gid])) {
+								$groups[] = $group_name[$gid];
+							}
+						}
+						// Terminal deep-link uses SeyalRun's own host_id (not zbx_host) —
+						// Linux only, matching the Assets page's SSH-icon gate.
+						$terminal_url = null;
+						if (!$is_windows) {
+							$terminal_url = $sso->buildEmbedUrl(
+								$username, $user_type,
+								'terminal?host_id=' . rawurlencode($h['id']) . '&autoconnect=1'
+							);
+						}
+						$rows[] = [
+							'name' => $h['name'],
+							'address' => ($h['ip'] ?? '') . (isset($h['port']) ? ':' . $h['port'] : ''),
+							'os' => $is_windows ? 'Windows' : 'Linux',
+							'is_linux' => !$is_windows,
+							'groups' => $groups,
+							'enabled' => (bool) ($h['enabled'] ?? true),
+							// Same Z/S badge as the Assets page: Z = synced from Zabbix, S = SeyalRun-native.
+							'source' => !empty($h['zabbix_hostid']) ? 'Z' : 'S',
+							'users_count' => $users_count[$h['id']] ?? 0,
+							'creds_count' => $creds_count[$h['id']] ?? 0,
+							'terminal_url' => $terminal_url,
+						];
+					}
+
+					usort($rows, static fn($a, $b) => strcasecmp($a['name'], $b['name']));
+				}
 			}
-
-			$rows[] = [
-				'hostid' => $host['hostid'],
-				'name' => $host['name'],
-				'address' => $address,
-				'port' => $iface['port'] ?? '',
-				'os' => $is_windows ? 'Windows' : 'Linux',
-				'is_linux' => !$is_windows,
-				// Zabbix omits the 'groups' key entirely (not even an empty array) for a
-				// host with zero group memberships on this API version — verified live.
-				'groups' => array_column($host['groups'] ?? [], 'name'),
-				'terminal_url' => $terminal_url,
-			];
 		}
 
 		$this->setResponse(new CControllerResponseData([
 			'hosts' => $rows,
 			'configured' => $sso->isConfigured(),
+			'reachable' => $reachable,
 			'seyalrun_url' => $sso->baseUrl(),
 		]));
 	}
