@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     zabbix_api_url: str = ""
     zabbix_api_token: str = ""
 
+    # Zabbix module trust anchor — HMAC-signs the Zabbix->SeyalRun module SSO
+    # handshake (zbx-sso-init). Mirrors zabbix_webhook_hmac_secret's role: the
+    # one thing that lets the module assert "this Zabbix user, this privilege
+    # level" without a prior SeyalRun session. Optional — only required if the
+    # Zabbix module is actually deployed; left blank, /auth/zbx-sso-init 503s.
+    zabbix_module_secret: str = ""
+
     # Used only to resolve a Zabbix hostid -> SeyalRun host_id for a kiosk login
     # (see auth.py::_resolve_kiosk_host); never used for anything user-facing.
     inventory_service_url: str = "http://inventory-service:8102"

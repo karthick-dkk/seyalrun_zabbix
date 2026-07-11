@@ -98,6 +98,7 @@ _NAV_SEGMENTS: dict[str, tuple[str, str]] = {
     "admin.automation": ("POST", "job-templates"),
     "admin.zabbix-integration": ("GET", "trigger-bindings"),
     "admin.integration": ("GET", "settings"),
+    "admin.platform": ("GET", "settings"),
     "admin.health": ("GET", "metrics"),
     "admin.housekeeping": ("GET", "housekeeping"),
     "admin.log-backend": ("GET", "log-backend"),

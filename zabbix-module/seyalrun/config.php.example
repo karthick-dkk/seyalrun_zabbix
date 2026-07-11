@@ -1,0 +1,32 @@
+<?php declare(strict_types = 1);
+
+/**
+ * SeyalRun <-> Zabbix module configuration.
+ *
+ * Copy this file to config.php (same directory) and fill in the values for your
+ * deployment:
+ *
+ *     cp config.php.example config.php
+ *
+ * config.php is listed in .gitignore for this module on purpose — never commit
+ * real secrets. module_secret here MUST match ZABBIX_MODULE_SECRET in
+ * SeyalRun's own .env exactly, on both sides (see zabbix-module/README.md).
+ *
+ * (A future version may move this into Zabbix's own module-configuration UI —
+ * a plain file is deliberately used here so behavior doesn't depend on
+ * Zabbix-version-specific module-config storage APIs.)
+ */
+return [
+	// SeyalRun's own base URL, reachable from wherever PHP runs for this Zabbix
+	// frontend (a server-side curl call) — usually the same URL a browser would
+	// use, but can differ if Zabbix and SeyalRun sit on different internal networks.
+	'seyalrun_url' => 'https://seyalrun.example.com',
+
+	// Must match ZABBIX_MODULE_SECRET in SeyalRun's .env. Generate a strong random
+	// value once, e.g.: openssl rand -hex 32
+	'module_secret' => '',
+
+	// Verify SeyalRun's TLS certificate on the server-side SSO call. Only set this
+	// to false temporarily against a self-signed cert while testing — never in production.
+	'verify_tls' => true,
+];

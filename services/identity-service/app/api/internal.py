@@ -340,3 +340,28 @@ async def internal_get_integration(session: AsyncSession = Depends(get_session))
         "zabbix_api_url": v.get("zabbix_api_url", ""),
         "zabbix_api_token": v.get("zabbix_api_token", ""),
     }
+
+
+@router.get("/settings/platform")
+async def internal_get_platform(session: AsyncSession = Depends(get_session)):
+    """Platform tunables (rate limits, session timeouts, log level) for api-gateway's
+    background settings cache — same DB-first/env-fallback resolution the superadmin
+    settings endpoint exposes, just without the require_admin gate (service-token only)."""
+    from ..models import ZASetting
+    from .settings import PLATFORM_KEY, _PLATFORM_DEFAULTS
+
+    row = await session.get(ZASetting, PLATFORM_KEY)
+    v = dict(row.value) if row and isinstance(row.value, dict) else {}
+    return {**_PLATFORM_DEFAULTS, **v}
+
+
+@router.get("/settings/zabbix-module")
+async def internal_get_zabbix_module(session: AsyncSession = Depends(get_session)):
+    """Zabbix-module trust settings (enabled, trusted IPs, elevated rate limit) for
+    api-gateway's background settings cache."""
+    from ..models import ZASetting
+    from .settings import ZABBIX_MODULE_KEY, _ZABBIX_MODULE_DEFAULTS
+
+    row = await session.get(ZASetting, ZABBIX_MODULE_KEY)
+    v = dict(row.value) if row and isinstance(row.value, dict) else {}
+    return {**_ZABBIX_MODULE_DEFAULTS, **v}

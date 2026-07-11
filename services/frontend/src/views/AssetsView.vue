@@ -70,9 +70,11 @@
                   @change="toggleHostSelect(h.id)"
                 />
               </td>
-              <!-- SSH connect button -->
+              <!-- SSH connect button — Linux only; Windows hosts use RDP, not SSH, and the
+                   Zabbix module's native Hosts page applies the same gate for consistency -->
               <td style="padding:6px 8px">
                 <button
+                  v-if="h.os_type !== 'windows'"
                   class="ssh-icon-btn"
                   :disabled="!h.enabled"
                   :title="`SSH into ${h.name} (${h.ip})`"

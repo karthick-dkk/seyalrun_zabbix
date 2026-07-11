@@ -182,6 +182,7 @@ Every variable is documented in [.env.example](.env.example). Highlights:
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | edge-proxy TLS cert/key (host paths, bind-mounted) |
 | `FRONTEND_ORIGIN` | CORS allow-origin for api-gateway — must match the URL you browse to |
 | `SEED_ADMIN_USERNAME` / `SEED_ADMIN_PASSWORD` | Initial superadmin (leave password blank to auto-generate) |
+| `ZABBIX_MODULE_SECRET` | Optional — only if using [zabbix-module/seyalrun/](zabbix-module/README.md); HMAC-signs the module's SSO handshake |
 
 No secret has a default value — services fail fast at startup if a required
 var is missing. `.env` is git-ignored; never commit real values or hardcode
@@ -216,4 +217,14 @@ payload — one HTTP request per interval, regardless of service count.
    populates health, request-rate, error-rate, and uptime items for every
    service. Error-log tailing (an agent-only capability) was retired with
    the sidecar — 5xx rates from `/metrics` cover the alerting need.
+
+## SeyalRun inside Zabbix (frontend module)
+
+Separately from monitoring, `zabbix-module/seyalrun/` is a Zabbix **frontend
+module** that embeds SeyalRun directly into the Zabbix UI: a SeyalRun menu
+right after Monitoring (Dashboard, Assets, SSH Hosts, Sessions, Jobs,
+Automation, Trigger Bindings), a permission-aware SSH-Hosts page with a
+one-click terminal icon on hosts you can write to, and a SeyalRun Settings
+page under Administration. See **[zabbix-module/README.md](zabbix-module/README.md)**
+for install steps, the `ZABBIX_MODULE_SECRET` trust setup, and troubleshooting.
 

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.pluginbase import IdentityProvider
 
-from ...models import ZARole, ZAUser
+from ...models import ZARole, ZAUser, ZAUserRole
 
 _CODE_TTL_SECONDS = 120
 _codes: dict[str, dict] = {}
@@ -71,19 +71,33 @@ class ZabbixSSOProvider(IdentityProvider):
         role_result = await session.execute(select(ZARole).where(ZARole.name == role_name))
         role = role_result.scalar_one_or_none()
 
-        if user is None:
+        is_new = user is None
+        if is_new:
             user = ZAUser(
                 username=username,
                 display_name=username,
                 zabbix_userid=username,
-                role_id=role.id if role else None,
+                role_id=role.id if role else None,  # legacy column — kept for display fallback only
                 is_active=True,
             )
             session.add(user)
             await session.flush()
         elif role and user.role_id != role.id:
-            # Keep role in sync with Zabbix's current role for this user.
             user.role_id = role.id
+
+        # The v3 RBAC system (api-gateway's actual enforcement) resolves permissions from
+        # za_user_roles, NOT the legacy role_id column above — effective_roles() never reads
+        # it. Without this, an auto-provisioned Zabbix SSO user shows the right role_name in
+        # the login response but has ZERO effective permissions (every request 403s). Keep
+        # the direct role assignment in sync with Zabbix's current role on every login, the
+        # same way the admin Users page's _set_user_roles does for a manual role change.
+        if role:
+            existing = await session.execute(select(ZAUserRole).where(ZAUserRole.user_id == user.id))
+            links = existing.scalars().all()
+            if is_new or not any(link.role_id == role.id for link in links):
+                for link in links:
+                    await session.delete(link)
+                session.add(ZAUserRole(user_id=user.id, role_id=role.id))
 
         await session.commit()
 
