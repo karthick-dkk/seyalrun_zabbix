@@ -54,6 +54,35 @@ class TemplateUpdate(BaseModel):
     allowed_param_keys: list[str] | None = None
 
 
+class PlaybookImportRequest(BaseModel):
+    url: str
+
+
+# SSRF guard for the GitHub playbook-import endpoint below: only these two hosts are ever
+# fetched, redirects are never followed (a redirect response is just rejected as a non-200),
+# and both the URL the caller supplied AND the raw URL it resolves to are checked — a
+# malicious blob-URL-shaped string can't be crafted to resolve outside this allowlist.
+_GITHUB_IMPORT_HOSTS = {"github.com", "raw.githubusercontent.com"}
+_GITHUB_IMPORT_MAX_BYTES = 512_000
+
+
+def _to_raw_github_url(url: str) -> str:
+    """https://github.com/{owner}/{repo}/blob/{branch}/{path} -> the raw.githubusercontent.com
+    equivalent. A URL that's already raw.githubusercontent.com passes through unchanged."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.hostname == "raw.githubusercontent.com":
+        return url
+    if parsed.hostname == "github.com":
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) >= 5 and parts[2] == "blob":
+            owner, repo, branch, rest = parts[0], parts[1], parts[3], "/".join(parts[4:])
+            return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{rest}"
+    raise ValueError("unsupported GitHub URL — use a github.com blob link (…/blob/branch/path) "
+                     "or a raw.githubusercontent.com link")
+
+
 class RunPayload(BaseModel):
     params: dict = {}
     target_host_ids: list[str] | None = None
@@ -91,6 +120,47 @@ async def create_template(
     await session.commit()
     await session.refresh(tmpl)
     return _out(tmpl)
+
+
+@router.post("/job-templates/import-playbook")
+async def import_playbook(
+    payload: PlaybookImportRequest,
+    role: str = Depends(get_user_role),
+):
+    """Fetch playbook YAML text from a GitHub URL for the template editor's
+    script_content field — this never persists anything, just returns text to prefill
+    the form; the user still reviews and saves it like any manually-pasted playbook."""
+    if role not in ("superadmin", "admin", "automation"):
+        raise HTTPException(status_code=403, detail="automation write access required")
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(payload.url)
+    if parsed.scheme != "https" or parsed.hostname not in _GITHUB_IMPORT_HOSTS:
+        raise HTTPException(status_code=400,
+                            detail="only https://github.com or https://raw.githubusercontent.com URLs are supported")
+    try:
+        raw_url = _to_raw_github_url(payload.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    raw_parsed = urlparse(raw_url)
+    if raw_parsed.scheme != "https" or raw_parsed.hostname not in _GITHUB_IMPORT_HOSTS:
+        raise HTTPException(status_code=400, detail="resolved URL is not on an allowed host")
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=10) as client:
+            resp = await client.get(raw_url)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="could not reach GitHub") from exc
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502,
+                            detail=f"GitHub returned {resp.status_code} — check the URL and that the file/branch exists")
+    if len(resp.content) > _GITHUB_IMPORT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="file too large (500KB limit)")
+
+    return {"content": resp.text, "source_url": raw_url}
 
 
 @router.get("/job-templates/{template_id}")

@@ -145,6 +145,18 @@ router.beforeEach(async (to) => {
     await auth.init()
   }
 
+  // An unconsumed sso_code in the URL is a fresh, explicit identity assertion from
+  // Zabbix (e.g. a "Terminal" link opened as a new top-level tab) and must always get
+  // a chance to be exchanged — even if auth.init() just authenticated this browser via
+  // an unrelated sr_session cookie left over from an earlier standalone login. Without
+  // this, a tab that inherits that ambient cookie session never even mounts LoginView
+  // (the only place sso_code is read), so it silently proceeds as the cookie's identity
+  // instead of the one Zabbix actually asserted for this click.
+  const hasUnconsumedSsoCode = !!new URLSearchParams(window.location.search).get('sso_code')
+  if (hasUnconsumedSsoCode) {
+    return to.path === '/login' ? true : { path: '/login', query: { redirect: to.fullPath } }
+  }
+
   if (!to.meta.public && !auth.isAuthenticated) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }

@@ -51,6 +51,15 @@
     <div class="main-content">
       <div v-if="!isEmbedded" class="topbar">
         <span class="topbar-title">{{ $route.meta.title || 'SeyalRun' }}</span>
+        <router-link
+          v-if="zabbixTokenWarning"
+          to="/admin/integration"
+          class="topbar-link"
+          style="color:var(--warn);border-color:rgba(210,153,34,0.4);background:rgba(210,153,34,0.08)"
+          title="Zabbix API token is missing or invalid — host sync and Zabbix reachability checks won't work until it's fixed"
+        >
+          ⚠ Zabbix API token issue
+        </router-link>
         <button class="topbar-btn" @click="openTerminal" title="SSH Terminal">
           <span v-html="ICONS.terminal" style="display:flex;align-items:center;" />
           SSH Terminal
@@ -109,10 +118,15 @@ const collapsed = ref(false)
 // Zabbix link: prefer the URL configured in .env (Admin → Integration); fall back to the
 // same-host /zabbix path. Fetched once so the header button matches the Integration page.
 const zabbixUrl = ref(`${location.protocol}//${location.host}/zabbix/`)
+// True only once Zabbix integration is actually configured (an API URL is set) AND
+// the token is either missing or proven invalid — not shown at all during initial
+// setup (no URL configured yet), only once there's a real problem to fix.
+const zabbixTokenWarning = ref(false)
 onMounted(async () => {
   try {
     const { data } = await api.get('/integration/info')
     if (data?.zabbix_url) zabbixUrl.value = data.zabbix_url
+    zabbixTokenWarning.value = !!data?.configured && (!data?.token_configured || data?.token_valid === false)
   } catch { /* keep fallback */ }
 })
 

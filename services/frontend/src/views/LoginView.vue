@@ -72,6 +72,12 @@ onMounted(async () => {
   const params = new URLSearchParams(window.location.search)
   const code = params.get('sso_code')
   if (!code) return
+  // The code is single-use and dead the moment we attempt it either way — strip it
+  // from the address bar now so a later refresh of this tab doesn't resend it (the
+  // router guard treats an unconsumed sso_code as always requiring a fresh exchange).
+  const url = new URL(window.location.href)
+  url.searchParams.delete('sso_code')
+  window.history.replaceState(null, '', url.toString())
   ssoLoading.value = true
   try {
     await auth.exchangeSSO(code)

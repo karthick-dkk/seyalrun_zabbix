@@ -6,7 +6,7 @@
           {{ state.title }}
           <button class="btn btn-sm btn-icon" @click="reject">✕</button>
         </div>
-        <div class="modal-body" style="font-size:14px;line-height:1.6">{{ state.message }}</div>
+        <div class="modal-body" style="font-size:14px;line-height:1.6;white-space:pre-line">{{ state.message }}</div>
         <div class="modal-footer">
           <button class="btn" @click="reject">{{ state.cancelLabel }}</button>
           <button :class="['btn', state.danger ? 'btn-danger' : 'btn-primary']" @click="accept">

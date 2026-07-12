@@ -1,6 +1,16 @@
 import { defineStore } from 'pinia'
 import api, { getToken, setToken, clearToken } from '@/api/client'
 
+// App.vue's boot-time onMounted and the router's initial beforeEach guard both
+// call init() within the same tick (main.ts mounts without awaiting
+// router.isReady()). Without this guard they fire two independent
+// /auth/session requests; if the first is still in flight when a user lands
+// on a deep link, gets bounced to /login, and logs in before it resolves, its
+// stale "not authenticated" response can land after login and wipe the fresh
+// session. Sharing one in-flight promise makes concurrent callers resolve
+// together, closing that window.
+let _initPromise: Promise<void> | null = null
+
 export interface SessionUser {
   id: string
   username: string
@@ -97,6 +107,16 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async init() {
+      if (_initPromise) return _initPromise
+      _initPromise = this._doInit()
+      try {
+        await _initPromise
+      } finally {
+        _initPromise = null
+      }
+    },
+
+    async _doInit() {
       // Always ask, even with no in-memory token: if one exists it rides as
       // the normal Authorization header (axios interceptor); if not, the
       // browser may still carry the httpOnly sr_session bootstrap cookie

@@ -18,9 +18,15 @@
             {{ syncPending ? 'Syncing…' : 'Zabbix Sync' }}
           </button>
           <span v-if="lastSynced" style="font-size:11px;color:var(--text2);white-space:nowrap">synced {{ fmtSyncTime(lastSynced) }}</span>
+          <button class="btn" style="font-size:12px" @click="exportHostsCsv" title="Export all hosts to CSV (no user or credential data included)">⇩ Export CSV</button>
+          <button v-if="auth.isAdminOrSupport" class="btn" style="font-size:12px" :disabled="csvImporting" @click="csvFileInput?.click()" title="Import hosts from CSV — never deletes existing hosts">
+            {{ csvImporting ? 'Importing…' : '⇧ Import CSV' }}
+          </button>
+          <input ref="csvFileInput" type="file" accept=".csv,text/csv" style="display:none" @change="handleCsvFile" />
           <button class="btn btn-icon" @click="load" title="Refresh"><svg style="width:14px;height:14px;display:block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg></button>
         </div>
       </div>
+      <div v-if="csvImportError" style="color:var(--danger);font-size:13px;padding:10px 14px;background:rgba(248,81,73,0.08);border-radius:6px;border:1px solid rgba(248,81,73,0.3);margin-bottom:12px">{{ csvImportError }}</div>
 
       <!-- ── Toolbar ──────────────────────────────────────────────────────── -->
       <div class="assets-toolbar">
@@ -911,6 +917,135 @@ async function saveAsset() {
     savingAsset.value = false
   }
 }
+
+// ── CSV export / import ─────────────────────────────────────────────────
+// Deliberately host-attribute-only: no user IDs, no credential IDs/links, no secrets —
+// a CSV export is a plain-text file that's easy to end up emailed or committed
+// somewhere, so it only ever carries what's already visible on this table.
+const CSV_HEADERS = ['Name', 'IP', 'Port', 'Platform', 'Zone', 'Host Groups', 'Status', 'Expires']
+
+function csvEscape(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+}
+
+function exportHostsCsv() {
+  const rows = hosts.value.map((h: any) => [
+    h.name || '', h.ip || '', String(h.port ?? ''), h.os_type === 'windows' ? 'Windows' : 'Linux',
+    zoneName(h) || '', groupNames(h).join('; '), h.enabled ? 'Active' : 'Inactive', h.date_expired || '',
+  ])
+  const csv = [CSV_HEADERS, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = `seyalrun-hosts-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// Minimal RFC4126-ish CSV line parser: handles quoted fields, escaped "" quotes, and
+// commas/newlines inside quotes — a naive split(',') would break on any of those.
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = [], field = '', inQuotes = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++ }
+      else if (c === '"') { inQuotes = false }
+      else { field += c }
+    } else if (c === '"') { inQuotes = true }
+    else if (c === ',') { row.push(field); field = '' }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++
+      row.push(field); field = ''
+      if (row.some((f) => f !== '')) rows.push(row)
+      row = []
+    } else { field += c }
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row) }
+  return rows
+}
+
+const csvFileInput = ref<HTMLInputElement | null>(null)
+const csvImporting = ref(false)
+const csvImportError = ref('')
+
+async function handleCsvFile(e: Event) {
+  csvImportError.value = ''
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    const rows = parseCsv(text)
+    if (!rows.length) { csvImportError.value = 'CSV file is empty.'; return }
+    const header = rows[0].map((h) => h.trim().toLowerCase())
+    const col = (name: string) => header.indexOf(name)
+    const iName = col('name'), iIp = col('ip'), iPort = col('port'), iOs = col('platform')
+    const iZone = col('zone'), iGroups = col('host groups'), iStatus = col('status'), iExp = col('expires')
+    if (iName === -1) { csvImportError.value = 'CSV must have a "Name" column.'; return }
+
+    const zoneIdByName = new Map(zones.value.map((z: any) => [z.name.toLowerCase(), z.id]))
+    const groupIdByName = new Map(hostGroups.value.map((g: any) => [g.name.toLowerCase(), g.id]))
+    const existingByName = new Map(hosts.value.map((h: any) => [h.name.toLowerCase(), h]))
+
+    const parsed = rows.slice(1)
+      .map((r) => ({
+        name: (r[iName] || '').trim(),
+        ip: iIp >= 0 ? (r[iIp] || '').trim() : '',
+        port: iPort >= 0 ? parseInt(r[iPort], 10) || 22 : 22,
+        os_type: iOs >= 0 && (r[iOs] || '').trim().toLowerCase() === 'windows' ? 'windows' : 'linux',
+        zone_id: iZone >= 0 ? zoneIdByName.get((r[iZone] || '').trim().toLowerCase()) || null : null,
+        group_ids: iGroups >= 0
+          ? (r[iGroups] || '').split(';').map((g) => g.trim().toLowerCase()).filter(Boolean)
+            .map((g) => groupIdByName.get(g)).filter((id): id is string => !!id)
+          : [],
+        enabled: iStatus >= 0 ? (r[iStatus] || '').trim().toLowerCase() !== 'inactive' : true,
+        date_expired: iExp >= 0 ? (r[iExp] || '').trim() || null : null,
+      }))
+      .filter((r) => r.name)
+
+    if (!parsed.length) { csvImportError.value = 'No valid rows found (each row needs at least a Name).'; return }
+
+    const toCreate = parsed.filter((r) => !existingByName.has(r.name.toLowerCase()))
+    const toUpdate = parsed.filter((r) => existingByName.has(r.name.toLowerCase()))
+
+    // Import only ever creates or updates rows present in the file — hosts that exist in
+    // SeyalRun but aren't in the CSV are never touched, let alone deleted. Existing hosts
+    // that ARE in the file only get overwritten after this explicit confirmation.
+    const summary = `Import ${parsed.length} row(s) from "${file.name}":\n`
+      + `• ${toCreate.length} new host(s) will be created\n`
+      + `• ${toUpdate.length} existing host(s) will be updated (matched by name) — their current name/IP/port/platform/zone/groups/status/expiry will be overwritten\n`
+      + `Hosts not listed in the file are never touched or deleted.`
+    const proceed = await confirm(summary, {
+      title: 'Confirm CSV Import', danger: toUpdate.length > 0,
+      confirmLabel: toUpdate.length > 0 ? `Overwrite ${toUpdate.length} & create ${toCreate.length}` : `Create ${toCreate.length}`,
+    })
+    if (!proceed) return
+
+    csvImporting.value = true
+    let failed = 0
+    for (const r of toCreate) {
+      const { name, ip, port, os_type, zone_id, group_ids, enabled, date_expired } = r
+      try { await api.post('/hosts', { name, ip, port, os_type, zone_id, group_ids, enabled, ...(date_expired ? { date_expired } : {}) }) }
+      catch { failed++ }
+    }
+    for (const r of toUpdate) {
+      const existing = existingByName.get(r.name.toLowerCase())
+      const { name, ip, port, os_type, zone_id, group_ids, enabled, date_expired } = r
+      try { await api.put(`/hosts/${existing.id}`, { name, ip, port, os_type, zone_id, group_ids, enabled, ...(date_expired ? { date_expired } : {}) }) }
+      catch { failed++ }
+    }
+    new BroadcastChannel('seyalrun-hosts').postMessage({ type: 'hosts-updated' })
+    await load()
+    if (failed) csvImportError.value = `Import finished with ${failed} row(s) failed — check host names/fields and retry those rows.`
+  } catch (err: any) {
+    csvImportError.value = err?.message || 'Failed to read CSV file.'
+  } finally {
+    csvImporting.value = false
+    if (csvFileInput.value) csvFileInput.value.value = ''
+  }
+}
+
 async function deleteAsset(h: any) {
   if (!await confirm(`Delete host "${h.name}"? This cannot be undone.`, { title: 'Delete Asset', danger: true, confirmLabel: 'Delete' })) return
   try { await api.delete(`/hosts/${h.id}`); load() }

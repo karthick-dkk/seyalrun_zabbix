@@ -96,50 +96,62 @@
 <style>
 	/* Design tokens copied 1:1 from services/frontend/src/assets/style.css so this
 	   native page matches the real Assets page exactly, not just approximately. */
+	/* Zabbix's own theme stylesheet (blue-theme.css / dark-theme.css etc.) sets
+	   backgrounds on ancestor containers (.wrapper, .content etc.) that this native
+	   PHP page renders inside — unlike the iframe-embedded pages, there's no
+	   document boundary keeping Zabbix's CSS out. Every background/color below is
+	   !important so this page reads the same regardless of which Zabbix theme
+	   (blue/dark/high-contrast) the logged-in user has selected in their profile —
+	   the same defensive pattern already used to hide Zabbix's own footer
+	   (seyalrun.embed.php) earlier in this module.
+	*/
 	.sr-wrap {
 		--bg2: #0e1422; --bg3: #161d30; --border: #232c42;
 		--text: #e7ecf6; --text2: #6b7690; --accent: #22c55e; --accent2: #3b82f6;
 		--danger: #ef4444; --warn: #d29922; --radius: 6px;
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 		/* left/right gutters so content isn't flush against the Zabbix sidebar */
-		font-size: 14px; color: var(--text); padding: 4px 18px 10px;
+		font-size: 14px; color: var(--text) !important; padding: 4px 18px 10px;
+		background: var(--bg2) !important;
+		min-height: calc(100vh - 56px);
+		margin: 0 -10px;
 	}
 	.sr-page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-	.sr-page-title { font-size: 22px; font-weight: 700; color: var(--text); }
+	.sr-page-title { font-size: 22px; font-weight: 700; color: var(--text) !important; }
 
-	.sr-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-	.sr-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-	.sr-table th { padding: 8px 12px; text-align: left; color: var(--text2); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
-	.sr-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+	.sr-card { background: var(--bg2) !important; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+	.sr-table { width: 100%; border-collapse: collapse; font-size: 13px; background: transparent !important; }
+	.sr-table th { padding: 8px 12px; text-align: left; color: var(--text2) !important; font-weight: 500; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; background: transparent !important; }
+	.sr-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text) !important; vertical-align: middle; background: transparent !important; }
 	.sr-table tr:last-child td { border-bottom: none; }
-	.sr-table tr:hover td { background: var(--bg3); }
+	.sr-table tr:hover td { background: var(--bg3) !important; }
 	.sr-th-c { text-align: center; }
 	.sr-th-r { text-align: right; }
-	.sr-empty { text-align: center; padding: 32px; color: var(--text2); }
-	.sr-mono { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12.5px; color: var(--accent2); }
-	.sr-muted { color: var(--text2); }
+	.sr-empty { text-align: center; padding: 32px; color: var(--text2) !important; }
+	.sr-mono { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12.5px; color: var(--accent2) !important; }
+	.sr-muted { color: var(--text2) !important; }
 	.sr-small { font-size: 12px; }
-	.sr-host-name { font-weight: 600; }
+	.sr-host-name { font-weight: 600; color: var(--text) !important; }
 
 	.src-badge { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 3px; font-size: 9px; font-weight: 800; line-height: 1; margin-right: 6px; }
-	.src-badge--zbx { background: rgba(240,136,62,0.15); border: 1px solid rgba(240,136,62,0.5); color: #f0883e; }
-	.src-badge--sr { background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.35); color: #58a6ff; }
+	.src-badge--zbx { background: rgba(240,136,62,0.15) !important; border: 1px solid rgba(240,136,62,0.5); color: #f0883e !important; }
+	.src-badge--sr { background: rgba(88,166,255,0.12) !important; border: 1px solid rgba(88,166,255,0.35); color: #58a6ff !important; }
 
 	.badge { padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; display: inline-block; margin-right: 4px; }
-	.badge-blue { background: rgba(59,130,246,0.18); color: #60a5fa; }
-	.badge-gray { background: rgba(107,118,144,0.2); color: #8b95ae; }
+	.badge-blue { background: rgba(59,130,246,0.18) !important; color: #60a5fa !important; }
+	.badge-gray { background: rgba(107,118,144,0.2) !important; color: #8b95ae !important; }
 
-	.sr-status { color: var(--text2); font-size: 12.5px; }
-	.sr-status--ok { color: #3fb950; }
+	.sr-status { color: var(--text2) !important; font-size: 12.5px; }
+	.sr-status--ok { color: #3fb950 !important; }
 
-	.count-link { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: #58a6ff; }
+	.count-link { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: #58a6ff !important; }
 	.count-link-num { font-weight: 700; font-size: 13px; }
 	.count-link-label { font-size: 11px; opacity: 0.85; }
-	.count-link--zero { color: var(--text2); }
+	.count-link--zero { color: var(--text2) !important; }
 
-	.ssh-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg3); color: var(--accent2); cursor: pointer; transition: all 0.15s; text-decoration: none; }
+	.ssh-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg3) !important; color: var(--accent2) !important; cursor: pointer; transition: all 0.15s; text-decoration: none; }
 	.ssh-icon-btn svg { width: 16px; height: 16px; }
-	.ssh-icon-btn:hover { background: rgba(59,130,246,0.15); border-color: var(--accent2); }
+	.ssh-icon-btn:hover { background: rgba(59,130,246,0.15) !important; border-color: var(--accent2); }
 
 	.sr-notice { max-width: 900px; padding: 12px 14px; margin-bottom: 14px; border-radius: var(--radius); font-size: 13px; line-height: 1.6; }
 	.sr-notice--error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.35); color: #f87171; }
