@@ -132,12 +132,23 @@ import { getToken } from '@/api/client'
 
 const auth = useAuthStore()
 const m = ref<any>(null)
+// Best-effort user-id -> username lookup for "Trigger -> playbook" rows in Recent
+// activity, which otherwise show the raw triggered_by UUID. /users degrades
+// gracefully (stays empty) for callers without list access.
+const userMap = ref<Record<string, string>>({})
 
 async function load() {
   try {
     const r = await fetch('/api/v1/metrics/dashboard', { headers: { Authorization: `Bearer ${getToken() || ''}` } })
     if (r.ok) m.value = await r.json()
   } catch { /* metrics-service optional */ }
+  try {
+    const r = await fetch('/api/v1/users', { headers: { Authorization: `Bearer ${getToken() || ''}` } })
+    if (r.ok) {
+      const users = await r.json()
+      userMap.value = Object.fromEntries(users.map((u: any) => [u.id, u.username || u.name || u.id]))
+    }
+  } catch { /* non-admin callers can't list users — falls back to raw id */ }
 }
 
 // SeyalRun's RBAC model has no "pending access request / approval" workflow — grants
@@ -199,7 +210,9 @@ const recentActivity = computed<ActivityRow[]>(() => {
 
 function jobActor(triggeredBy: string): string {
   if (!triggeredBy) return 'system'
-  return triggeredBy.startsWith('user:') ? triggeredBy.slice(5) : 'system'
+  if (!triggeredBy.startsWith('user:')) return 'system'
+  const userId = triggeredBy.slice(5)
+  return userMap.value[userId] || userId
 }
 function shortName(n: string) { return n && n.length > 26 ? n.slice(0, 24) + '…' : (n || '—') }
 

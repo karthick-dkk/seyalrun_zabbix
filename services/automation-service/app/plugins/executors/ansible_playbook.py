@@ -61,8 +61,10 @@ class AnsiblePlaybookExecutor(ActionExecutor):
     name = "ansible_playbook"
 
     def validate(self, params: dict) -> None:
-        if not params.get("playbook_path") and not params.get("script_content"):
-            raise ValueError("ansible_playbook requires playbook_path or script_content in params")
+        # playbook_path was never actually read by execute() below — only
+        # script_content ever ran — so it's not accepted as an alternative here.
+        if not params.get("script_content"):
+            raise ValueError("ansible_playbook requires script_content in params")
 
     async def execute(self, request: RunRequest, publish_line: Callable) -> RunResult:
         from app.config import get_settings

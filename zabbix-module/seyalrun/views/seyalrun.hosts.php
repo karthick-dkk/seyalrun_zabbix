@@ -105,6 +105,11 @@
 	   the same defensive pattern already used to hide Zabbix's own footer
 	   (seyalrun.embed.php) earlier in this module.
 	*/
+	.wrapper > footer[role="contentinfo"] { display: none !important; }
+	/* Same fix as seyalrun.embed.php: flex-fill the shared layout.htmlpage column
+	   instead of guessing a min-height (a fixed calc(100vh - Npx) silently falls
+	   short whenever the real chrome height differs by even a few px, which is
+	   exactly what left a gap here after only hiding the footer). */
 	.sr-wrap {
 		--bg2: #0e1422; --bg3: #161d30; --border: #232c42;
 		--text: #e7ecf6; --text2: #6b7690; --accent: #22c55e; --accent2: #3b82f6;
@@ -113,7 +118,8 @@
 		/* left/right gutters so content isn't flush against the Zabbix sidebar */
 		font-size: 14px; color: var(--text) !important; padding: 4px 18px 10px;
 		background: var(--bg2) !important;
-		min-height: calc(100vh - 56px);
+		display: flex !important; flex-direction: column;
+		flex: 1 1 auto; min-height: 0;
 		margin: 0 -10px;
 	}
 	.sr-page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }

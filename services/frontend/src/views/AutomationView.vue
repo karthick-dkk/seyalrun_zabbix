@@ -87,7 +87,7 @@
                 </td>
                 <td><span class="badge" :class="t.action_type === 'bash_script' ? 'badge-blue' : 'badge-green'" style="font-size:10px">{{ t.action_type === 'bash_script' ? 'Bash Script' : 'Ansible Playbook' }}</span></td>
                 <td style="color:var(--text2);font-size:13px">{{ projectName(t.project_id) || '—' }}</td>
-                <td style="color:var(--text2);font-size:12px">{{ t.playbook_path || (t.script_content ? `${t.script_content.split('\n').length} lines` : '—') }}</td>
+                <td style="color:var(--text2);font-size:12px">{{ t.script_content ? `${t.script_content.split('\n').length} lines` : '—' }}</td>
                 <td style="color:var(--text2);font-size:12px">{{ userName(t.created_by) || '—' }}</td>
                 <td><span v-if="t.enabled" style="color:#3fb950;font-size:12px">✓ Active</span><span v-else style="color:var(--text2);font-size:12px">Disabled</span></td>
                 <td>
@@ -121,8 +121,7 @@
             </div>
             <div v-if="t.description" class="pb-desc">{{ t.description }}</div>
             <div class="pb-details">
-              <div v-if="t.playbook_path" class="pb-detail-row"><span class="pb-detail-label">Path</span><code class="pb-detail-val">{{ t.playbook_path }}</code></div>
-              <div v-else-if="t.script_content" class="pb-detail-row">
+              <div v-if="t.script_content" class="pb-detail-row">
                 <span class="pb-detail-label">Content</span>
                 <span class="pb-detail-val" style="color:var(--text2)">{{ t.action_type === 'bash_script' ? 'Bash script' : 'Inline YAML' }} ({{ t.script_content.split('\n').length }} lines)</span>
               </div>
@@ -423,71 +422,7 @@
             <input v-model="editDlg.form.description" class="input" placeholder="Brief description of what this does" />
           </div>
 
-          <!-- ── Ansible playbook content ─────────────────────────────────── -->
-          <template v-if="editDlg.form.action_type === 'ansible_playbook'">
-            <div class="form-group">
-              <label class="form-label">Content Type</label>
-              <div class="radio-row">
-                <label class="radio-opt" :class="{ active: editDlg.form.contentType === 'path' }"><input type="radio" v-model="editDlg.form.contentType" value="path" /> Playbook Path</label>
-                <label class="radio-opt" :class="{ active: editDlg.form.contentType === 'inline' }"><input type="radio" v-model="editDlg.form.contentType" value="inline" /> Inline YAML</label>
-              </div>
-            </div>
-            <div v-if="editDlg.form.contentType === 'path'" class="form-group">
-              <label class="form-label">Playbook Path</label>
-              <input v-model="editDlg.form.playbook_path" class="input" placeholder="e.g. deploy/site.yml" />
-            </div>
-            <div v-else class="form-group">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-                <label class="form-label" style="margin:0">Inline Playbook YAML</label>
-                <button type="button" class="btn btn-sm" :disabled="githubImport.loading" @click="githubImport.visible = true">
-                  {{ githubImport.loading ? 'Importing…' : '⇩ Import from GitHub' }}
-                </button>
-              </div>
-              <textarea v-model="editDlg.form.script_content" class="input code-input code-input--lg" rows="20" placeholder="---&#10;- hosts: all&#10;  tasks:&#10;    - name: Check connectivity&#10;      ping:" spellcheck="false"></textarea>
-              <div v-if="editDlg.form.imported_from" class="code-source-note">Imported from <a :href="editDlg.form.imported_from" target="_blank" rel="noopener">{{ editDlg.form.imported_from }}</a></div>
-              <div v-if="lintErrors.length" class="lint-panel">
-                <div v-for="(err, i) in lintErrors" :key="i" class="lint-error">⚠ Line {{ err.line }}: {{ err.message }}</div>
-              </div>
-              <div v-else-if="editDlg.form.script_content.trim()" class="lint-ok">✓ Valid YAML — parses as a list of plays</div>
-            </div>
-          </template>
-
-          <!-- ── Bash script content ──────────────────────────────────────── -->
-          <template v-else>
-            <div class="form-group">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-                <label class="form-label" style="margin:0">Script</label>
-                <button type="button" class="btn btn-sm" :disabled="githubImport.loading" @click="githubImport.visible = true">
-                  {{ githubImport.loading ? 'Importing…' : '⇩ Import from GitHub' }}
-                </button>
-              </div>
-              <textarea v-model="editDlg.form.script_content" class="input code-input code-input--lg" rows="20" placeholder="#!/bin/bash&#10;set -e&#10;systemctl restart nginx" spellcheck="false"></textarea>
-              <div v-if="editDlg.form.imported_from" class="code-source-note">Imported from <a :href="editDlg.form.imported_from" target="_blank" rel="noopener">{{ editDlg.form.imported_from }}</a></div>
-              <div v-if="lintErrors.length" class="lint-panel">
-                <div v-for="(err, i) in lintErrors" :key="i" class="lint-error">⚠ Line {{ err.line }}: {{ err.message }}</div>
-              </div>
-              <div v-else-if="editDlg.form.script_content.trim()" class="lint-ok">✓ No unmatched quotes, brackets, or block keywords found</div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Options / Arguments</label>
-              <input v-model="editDlg.form.script_args" class="input" placeholder="e.g. -v --dry-run (passed to the script as $1, $2, … — quote args with spaces)" />
-            </div>
-          </template>
-
-          <!-- ── Privilege escalation (both types) ────────────────────────── -->
-          <div class="form-group">
-            <label class="form-label"><input type="checkbox" v-model="editDlg.form.use_sudo" style="margin-right:6px;accent-color:#58a6ff" />Run with sudo</label>
-            <div v-if="editDlg.form.use_sudo" style="margin-top:8px">
-              <select v-model="editDlg.form.sudo_credential_id" class="input">
-                <option value="">— Use the login credential's own password —</option>
-                <option v-for="c in allCredentials" :key="c.id" :value="c.id">{{ c.name }} ({{ c.username }})</option>
-              </select>
-              <div style="font-size:11.5px;color:var(--text2);margin-top:4px">
-                The sudo password always comes from a stored credential, never typed here — it's never written into job history. Leave as-is to reuse the same password used to log in over SSH; pick a specific credential only if sudo needs a different password (must be a password-type credential, not an SSH key).
-              </div>
-            </div>
-          </div>
-
+          <!-- ── Settings (credential / targets / sudo / quick action / status) ── -->
           <div class="inline-form-row">
             <div class="form-group" style="flex:1">
               <label class="form-label">Execution Credential</label>
@@ -501,6 +436,18 @@
               <AsyncPicker v-model="editDlg.form.targetHosts" :search-fn="searchHosts" placeholder="Select default hosts…" />
             </div>
           </div>
+          <div class="form-group">
+            <label class="form-label"><input type="checkbox" v-model="editDlg.form.use_sudo" style="margin-right:6px;accent-color:#58a6ff" />Run with sudo</label>
+            <div v-if="editDlg.form.use_sudo" style="margin-top:8px">
+              <select v-model="editDlg.form.sudo_credential_id" class="input">
+                <option value="">— Use the login credential's own password —</option>
+                <option v-for="c in allCredentials" :key="c.id" :value="c.id">{{ c.name }} ({{ c.username }})</option>
+              </select>
+              <div style="font-size:11.5px;color:var(--text2);margin-top:4px">
+                The sudo password always comes from a stored credential, never typed here — it's never written into job history. Leave as-is to reuse the same password used to log in over SSH; pick a specific credential only if sudo needs a different password (must be a password-type credential, not an SSH key).
+              </div>
+            </div>
+          </div>
           <div class="inline-form-row">
             <div class="form-group" style="flex:1">
               <label class="form-label"><input type="checkbox" v-model="editDlg.form.quick_action" style="margin-right:6px;accent-color:#58a6ff" />Quick Action button on host cards</label>
@@ -510,6 +457,38 @@
               <select v-model="editDlg.form.enabled" class="input"><option :value="true">Active</option><option :value="false">Disabled</option></select>
             </div>
           </div>
+          <div v-if="editDlg.form.action_type === 'bash_script'" class="form-group">
+            <label class="form-label">Options / Arguments</label>
+            <input v-model="editDlg.form.script_args" class="input" placeholder="e.g. -v --dry-run (passed to the script as $1, $2, … — quote args with spaces)" />
+          </div>
+
+          <!-- ── Code (last): the full code editor ────────────────────────── -->
+          <div class="form-group">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+              <label class="form-label" style="margin:0">{{ editDlg.form.action_type === 'bash_script' ? 'Script' : 'Inline Playbook YAML' }}</label>
+              <button type="button" class="btn btn-sm" :disabled="githubImport.loading" @click="githubImport.visible = true">
+                {{ githubImport.loading ? 'Importing…' : '⇩ Import from GitHub' }}
+              </button>
+            </div>
+            <div class="code-editor-wrap">
+              <div ref="codeGutterEl" class="code-gutter">{{ codeLineNumbers }}</div>
+              <textarea
+                ref="codeTextareaEl"
+                v-model="editDlg.form.script_content"
+                class="input code-input code-input--lg"
+                rows="20"
+                :placeholder="editDlg.form.action_type === 'bash_script' ? '#!/bin/bash\nset -e\nsystemctl restart nginx' : '---\n- hosts: all\n  tasks:\n    - name: Check connectivity\n      ping:'"
+                spellcheck="false"
+                @scroll="syncGutterScroll"
+              ></textarea>
+            </div>
+            <div v-if="editDlg.form.imported_from" class="code-source-note">Imported from <a :href="editDlg.form.imported_from" target="_blank" rel="noopener">{{ editDlg.form.imported_from }}</a></div>
+            <div v-if="lintErrors.length" class="lint-panel">
+              <div v-for="(err, i) in lintErrors" :key="i" class="lint-error">⚠ Line {{ err.line }}: {{ err.message }}</div>
+            </div>
+            <div v-else-if="editDlg.form.script_content.trim()" class="lint-ok">{{ editDlg.form.action_type === 'bash_script' ? '✓ No unmatched quotes, brackets, or block keywords found' : '✓ Valid YAML — parses as a list of plays' }}</div>
+          </div>
+
           <div v-if="editDlg.error" style="color:var(--danger);font-size:13px;padding:10px;background:rgba(248,81,73,0.08);border-radius:6px;border:1px solid rgba(248,81,73,0.3)">{{ editDlg.error }}</div>
         </div>
         <div class="modal-footer">
@@ -842,8 +821,7 @@ async function submitRun() {
 // ── Create / Edit Job Template modal (Ansible Playbook or Bash Script) ─────
 const _blankPlaybookForm = () => ({
   name: '', description: '', project_id: '', action_type: 'ansible_playbook' as 'ansible_playbook' | 'bash_script',
-  contentType: 'path' as 'path' | 'inline',
-  playbook_path: '', script_content: '', script_args: '', imported_from: '',
+  script_content: '', script_args: '', imported_from: '',
   use_sudo: false, sudo_credential_id: '',
   credential_id: '', targetHosts: [] as PickerItem[],
   quick_action: false, enabled: true,
@@ -865,8 +843,7 @@ function openEdit(t: any) {
   Object.assign(editDlg.form, {
     name: t.name, description: t.description || '', project_id: t.project_id || '',
     action_type: t.action_type === 'bash_script' ? 'bash_script' : 'ansible_playbook',
-    contentType: t.playbook_path ? 'path' : 'inline',
-    playbook_path: t.playbook_path || '', script_content: t.script_content || '',
+    script_content: t.script_content || '',
     script_args: t.default_params?.script_args || '', imported_from: t.default_params?.imported_from || '',
     use_sudo: !!t.default_params?.use_sudo, sudo_credential_id: t.default_params?.sudo_credential_id || '',
     credential_id: t.credential_id || '', quick_action: t.quick_action, enabled: t.enabled,
@@ -885,11 +862,27 @@ async function doGithubImport() {
   try {
     const r = await api.post('/job-templates/import-playbook', { url: githubImport.url.trim() })
     editDlg.form.script_content = r.data.content
-    editDlg.form.contentType = 'inline'
     editDlg.form.imported_from = r.data.source_url || githubImport.url.trim()
+    // Auto-detect type from the imported file's extension so the right linter runs.
+    // Without this, importing a .sh file while "Ansible Playbook" was still selected
+    // ran the YAML parser against real bash and reported false syntax errors — the
+    // script was fine, it just was never valid YAML to begin with.
+    const importedUrl = (r.data.source_url || githubImport.url).toLowerCase()
+    editDlg.form.action_type = /\.(sh|bash)(\?|#|$)/.test(importedUrl) ? 'bash_script' : 'ansible_playbook'
     githubImport.visible = false; githubImport.url = ''
   } catch (e: any) { githubImport.error = e?.response?.data?.detail || 'Import failed'
   } finally { githubImport.loading = false }
+}
+
+// ── Code editor line-number gutter (synced scroll with the textarea) ──────
+const codeGutterEl = ref<HTMLElement | null>(null)
+const codeTextareaEl = ref<HTMLTextAreaElement | null>(null)
+const codeLineNumbers = computed(() => {
+  const n = (editDlg.form.script_content.match(/\n/g)?.length ?? 0) + 1
+  return Array.from({ length: n }, (_, i) => i + 1).join('\n')
+})
+function syncGutterScroll() {
+  if (codeGutterEl.value && codeTextareaEl.value) codeGutterEl.value.scrollTop = codeTextareaEl.value.scrollTop
 }
 
 // ── Live syntax checking ────────────────────────────────────────────────
@@ -976,14 +969,12 @@ function lintBash(content: string): LintError[] {
 
 let lintTimer: ReturnType<typeof setTimeout> | null = null
 function runLint() {
-  const showYaml = editDlg.form.action_type === 'ansible_playbook' && editDlg.form.contentType === 'inline'
-  const showBash = editDlg.form.action_type === 'bash_script'
-  lintErrors.value = showYaml ? lintYaml(editDlg.form.script_content)
-    : showBash ? lintBash(editDlg.form.script_content)
-    : []
+  lintErrors.value = editDlg.form.action_type === 'bash_script'
+    ? lintBash(editDlg.form.script_content)
+    : lintYaml(editDlg.form.script_content)
 }
 watch(
-  () => [editDlg.form.script_content, editDlg.form.action_type, editDlg.form.contentType, editDlg.visible],
+  () => [editDlg.form.script_content, editDlg.form.action_type, editDlg.visible],
   () => {
     if (lintTimer) clearTimeout(lintTimer)
     lintTimer = setTimeout(runLint, 300)
@@ -1000,8 +991,8 @@ async function saveTemplate() {
     const p = {
       name: editDlg.form.name.trim(), description: editDlg.form.description,
       project_id: editDlg.form.project_id, action_type: editDlg.form.action_type,
-      playbook_path: !isBash && editDlg.form.contentType === 'path' ? editDlg.form.playbook_path : '',
-      script_content: isBash || editDlg.form.contentType === 'inline' ? editDlg.form.script_content : '',
+      playbook_path: '',
+      script_content: editDlg.form.script_content,
       credential_id: editDlg.form.credential_id || null,
       target_host_ids: editDlg.form.targetHosts.map(h => h.id),
       target_scope: 'hosts', quick_action: editDlg.form.quick_action, enabled: editDlg.form.enabled,
@@ -1187,6 +1178,14 @@ onMounted(async () => {
 /* ── Code input ───────────────────────────────────────────────────────────── */
 .code-input { font-family: var(--font-mono, monospace) !important; font-size: 12px; resize: vertical; }
 .code-input--lg { min-height: 340px; line-height: 1.55; }
+.code-editor-wrap { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.code-editor-wrap .code-input { flex: 1; border: none; border-radius: 0; }
+.code-gutter {
+  flex-shrink: 0; padding: 8px 10px; text-align: right; user-select: none; pointer-events: none;
+  background: var(--bg3); color: var(--text2); font-family: var(--font-mono, monospace);
+  font-size: 12px; line-height: 1.55; overflow: hidden; white-space: pre;
+  border-right: 1px solid var(--border);
+}
 .code-source-note { font-size: 11.5px; color: var(--text2); margin-top: 6px; }
 .code-source-note a { color: var(--accent2); }
 .lint-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
