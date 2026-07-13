@@ -5,4 +5,7 @@ FROM nginxinc/nginx-unprivileged:1.27-alpine
 # leaving nginx's own $-vars intact, then writes /etc/nginx/conf.d/default.conf.
 COPY services/edge-proxy/templates/default.conf.template /etc/nginx/templates/default.conf.template
 
+# Already the base image's own default — declared explicitly for Trivy's
+# Dockerfile linter (DS-0002), same as services/frontend/Dockerfile.
+USER nginx
 EXPOSE 8080 8443

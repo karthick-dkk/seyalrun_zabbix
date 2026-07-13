@@ -13,4 +13,8 @@ FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY services/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /build/dist /usr/share/nginx/html
 
+# Already the base image's own default (confirmed via docker inspect) — declared
+# explicitly here too since Trivy's Dockerfile linter (DS-0002) only reads this
+# file's own text, not the inherited base-image user.
+USER nginx
 EXPOSE 8080
