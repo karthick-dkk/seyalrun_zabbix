@@ -1,5 +1,5 @@
 # Build context: repo root (so future shared frontend libs could be added)
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /build
 COPY services/frontend/package.json services/frontend/package-lock.json* ./
 RUN npm config set fetch-retries 5 \
