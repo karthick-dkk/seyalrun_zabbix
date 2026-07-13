@@ -57,7 +57,11 @@ jobs:
         with:
           context: .
           file: services/${{ matrix.service }}/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          # frontend is amd64-only: its build runs a Vite/esbuild compile inside
+          # the image, and esbuild's native binary hits an illegal instruction
+          # under QEMU's arm64 emulation (SIGILL, "uncaught target signal 4").
+          # It's a static nginx-served bundle, not arch-sensitive at runtime.
+          platforms: ${{ matrix.service == 'frontend' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: true
           tags: |
             ${{ env.DOCKERHUB_NAMESPACE }}/seyalrun-${{ matrix.service }}:${{ steps.ver.outputs.version }}
