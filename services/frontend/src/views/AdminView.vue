@@ -25,8 +25,6 @@
       <CredentialsAdmin v-else-if="section === 'credentials'" />
       <ZonesAdmin v-else-if="section === 'zones'" />
       <SecurityAdmin v-else-if="section === 'security'" />
-      <AutomationAdmin v-else-if="section === 'automation'" />
-      <ZabbixIntegrationAdmin v-else-if="section === 'zabbix-integration'" />
       <IntegrationAdmin v-else-if="section === 'integration'" />
       <PlatformSettingsAdmin v-else-if="section === 'platform'" />
       <HealthAdmin v-else-if="section === 'health'" />
@@ -47,8 +45,6 @@ import AuthorizationsAdmin from './admin/AuthorizationsAdmin.vue'
 import CredentialsAdmin from './admin/CredentialsAdmin.vue'
 import ZonesAdmin from './admin/ZonesAdmin.vue'
 import SecurityAdmin from './admin/SecurityAdmin.vue'
-import AutomationAdmin from './admin/AutomationAdmin.vue'
-import ZabbixIntegrationAdmin from './admin/ZabbixIntegrationAdmin.vue'
 import IntegrationAdmin from './admin/IntegrationAdmin.vue'
 import PlatformSettingsAdmin from './admin/PlatformSettingsAdmin.vue'
 import HealthAdmin from './admin/HealthAdmin.vue'
@@ -73,8 +69,6 @@ const GROUPS = [
     { area: 'admin.zones', to: '/admin/zones', label: 'Zones' },
   ] },
   { label: 'Automation', tabs: [
-    { area: 'admin.automation', to: '/admin/automation', label: 'Automation' },
-    { area: 'admin.zabbix-integration', to: '/admin/zabbix-integration', label: 'Zabbix Integration' },
     { area: 'admin.integration', to: '/admin/integration', label: 'Integration' },
     { area: 'admin.platform', to: '/admin/platform', label: 'SeyalRun Settings' },
   ] },

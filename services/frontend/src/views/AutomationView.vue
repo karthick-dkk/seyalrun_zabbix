@@ -52,13 +52,61 @@
       <!-- ANSIBLE PLAYBOOKS tab                                              -->
       <!-- ══════════════════════════════════════════════════════════════════ -->
       <div v-if="serviceAvailable && autoTab === 'playbooks'">
+        <div class="pb-toolbar">
+          <input v-model="templateSearch" class="input" placeholder="Search name or description…" style="max-width:260px;font-size:13px" />
+          <select v-model="templateProjectFilter" class="input" style="max-width:180px;font-size:13px">
+            <option value="">All projects</option>
+            <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+          <div class="view-toggle">
+            <button :class="['view-toggle-btn', { active: templateViewMode === 'list' }]" title="List view" @click="templateViewMode = 'list'">☰ List</button>
+            <button :class="['view-toggle-btn', { active: templateViewMode === 'grid' }]" title="Grid view" @click="templateViewMode = 'grid'">▦ Grid</button>
+          </div>
+        </div>
+
         <div v-if="!playbookTemplates.length" class="cards-empty">
           <div style="font-size:28px;margin-bottom:10px">📜</div>
           <div>No playbooks or scripts yet.</div>
           <div v-if="auth.isAdminOrSupport" style="margin-top:8px"><button class="btn btn-primary" @click="openCreate">+ Create your first template</button></div>
         </div>
+        <div v-else-if="!filteredPlaybookTemplates.length" class="cards-empty">No templates match this search/project filter.</div>
+
+        <!-- ── List view (default) ──────────────────────────────────────── -->
+        <div v-else-if="templateViewMode === 'list'" class="card" style="margin-top:0">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Type</th><th>Project</th><th>Content</th><th>Created by</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in filteredPlaybookTemplates" :key="t.id">
+                <td style="font-weight:600">{{ t.action_type === 'bash_script' ? '⌨' : '📜' }} {{ t.name }}
+                  <span v-if="t.default_params?.use_sudo" class="badge badge-orange" style="font-size:9px;margin-left:4px">sudo</span>
+                  <span v-if="t.quick_action" class="badge badge-blue" style="font-size:9px;margin-left:4px">Quick Action</span>
+                </td>
+                <td><span class="badge" :class="t.action_type === 'bash_script' ? 'badge-blue' : 'badge-green'" style="font-size:10px">{{ t.action_type === 'bash_script' ? 'Bash Script' : 'Ansible Playbook' }}</span></td>
+                <td style="color:var(--text2);font-size:13px">{{ projectName(t.project_id) || '—' }}</td>
+                <td style="color:var(--text2);font-size:12px">{{ t.playbook_path || (t.script_content ? `${t.script_content.split('\n').length} lines` : '—') }}</td>
+                <td style="color:var(--text2);font-size:12px">{{ userName(t.created_by) || '—' }}</td>
+                <td><span v-if="t.enabled" style="color:#3fb950;font-size:12px">✓ Active</span><span v-else style="color:var(--text2);font-size:12px">Disabled</span></td>
+                <td>
+                  <div style="display:flex;gap:6px;justify-content:flex-end">
+                    <button class="btn-pill btn-pill-outline" style="font-size:11px" :disabled="!t.enabled" @click="openRunModal(t)">▶ Run</button>
+                    <template v-if="auth.isAdminOrSupport">
+                      <button class="btn-pill btn-pill-outline" style="font-size:11px" @click="openEdit(t)">✎</button>
+                      <button class="btn-pill btn-pill-outline" style="font-size:11px;color:var(--danger);border-color:var(--danger)" @click="deleteTemplate(t)">🗑</button>
+                    </template>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ── Grid view ─────────────────────────────────────────────────── -->
         <div v-else class="playbook-grid">
-          <div v-for="t in playbookTemplates" :key="t.id" class="playbook-card">
+          <div v-for="t in filteredPlaybookTemplates" :key="t.id" class="playbook-card">
             <div class="pb-header">
               <div class="pb-icon">{{ t.action_type === 'bash_script' ? '⌨' : '📜' }}</div>
               <div class="pb-meta">
@@ -82,6 +130,7 @@
               <div v-if="t.credential_id" class="pb-detail-row"><span class="pb-detail-label">Credential</span><span class="pb-detail-val">{{ credName(t.credential_id) }}</span></div>
               <div v-if="(t.target_host_ids || []).length" class="pb-detail-row"><span class="pb-detail-label">Default targets</span><span class="pb-detail-val">{{ t.target_host_ids.length }} host{{ t.target_host_ids.length === 1 ? '' : 's' }}</span></div>
               <div v-if="projectName(t.project_id)" class="pb-detail-row"><span class="pb-detail-label">Project</span><span class="pb-detail-val">{{ projectName(t.project_id) }}</span></div>
+              <div v-if="userName(t.created_by)" class="pb-detail-row"><span class="pb-detail-label">Created by</span><span class="pb-detail-val">{{ userName(t.created_by) }}</span></div>
             </div>
             <div class="pb-footer">
               <button class="btn btn-primary btn-sm" :disabled="!t.enabled" @click="openRunModal(t)">▶ Run</button>
@@ -169,11 +218,15 @@
       <!-- RECENT RUNS tab                                                    -->
       <!-- ══════════════════════════════════════════════════════════════════ -->
       <div v-if="serviceAvailable && autoTab === 'runs'" class="card" style="margin-top:0">
+        <div class="card-header">Recent Runs <button class="btn btn-sm" @click="loadRuns">Refresh</button></div>
         <table class="table">
           <thead>
             <tr>
               <th>Template</th>
+              <th>Action</th>
               <th>Triggered by</th>
+              <th>Hosts</th>
+              <th>Login</th>
               <th>Status</th>
               <th>Started</th>
               <th>Duration</th>
@@ -181,14 +234,17 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in runs" :key="r.id">
-              <td style="font-weight:500">{{ templateName(r.job_template_id) || '—' }}</td>
-              <td style="font-size:12px;color:var(--text2)">{{ formatTriggeredBy(r.triggered_by) }}</td>
+            <tr v-for="r in runs" :key="r.id" style="cursor:pointer" @click="$router.push(`/jobs/${r.id}`)">
+              <td style="font-weight:500">{{ r.job_template_name || templateName(r.job_template_id) || '—' }}</td>
+              <td><span class="badge badge-gray" style="font-size:11px">{{ r.action_type || '—' }}</span></td>
+              <td style="font-size:12px;color:var(--text2)">{{ triggeredByLabel(r) }}</td>
+              <td style="font-size:12px;color:var(--text2)" :title="runHostsTitle(r)">{{ runHostsLabel(r) }}</td>
+              <td style="font-size:12px;color:var(--text2)">{{ runCredentialLabel(r) }}</td>
               <td><span class="run-status-badge" :class="`run-status--${r.status}`">{{ r.status }}</span></td>
               <td style="font-size:12px;color:var(--text2)">{{ r.started_at ? new Date(r.started_at).toLocaleString() : '—' }}</td>
               <td style="font-size:12px;color:var(--text2)">{{ runDuration(r) }}</td>
               <td>
-                <button class="btn-pill btn-pill-outline" style="font-size:11px" @click="$router.push(`/jobs/${r.id}`)">View</button>
+                <button class="btn-pill btn-pill-outline" style="font-size:11px" @click.stop="$router.push(`/jobs/${r.id}`)">View</button>
               </td>
             </tr>
           </tbody>
@@ -527,7 +583,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import yaml from 'js-yaml'
 import AppShell from '@/components/layout/AppShell.vue'
 import AsyncPicker, { type PickerItem } from '@/components/common/AsyncPicker.vue'
@@ -535,6 +591,7 @@ import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 
+const route   = useRoute()
 const router  = useRouter()
 const auth    = useAuthStore()
 const { confirm } = useConfirm()
@@ -553,28 +610,68 @@ const runs         = ref<any[]>([])
 const allCredentials = ref<any[]>([])
 const allHosts       = ref<any[]>([])
 const allHostGroups  = ref<any[]>([])
+// Best-effort — /users degrades to raw ids for callers without list access, same pattern
+// already used by JobRunsListView/JobRunView for "triggered by" and now "created by".
+const allUsers        = ref<any[]>([])
+
+// ── Playbooks & Scripts toolbar (search / project filter / view mode) ─────────
+const templateSearch      = ref('')
+const templateProjectFilter = ref('')
+const templateViewMode    = ref<'list' | 'grid'>('list')
 
 // ── Computed ───────────────────────────────────────────────────────────────
 const playbookTemplates = computed(() => allTemplates.value.filter(t => t.action_type === 'ansible_playbook' || t.action_type === 'bash_script'))
 
+const filteredPlaybookTemplates = computed(() => {
+  const q = templateSearch.value.trim().toLowerCase()
+  return playbookTemplates.value.filter((t) => {
+    if (templateProjectFilter.value && t.project_id !== templateProjectFilter.value) return false
+    if (!q) return true
+    return t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q)
+  })
+})
+
 const projectMap  = computed(() => new Map(projects.value.map(p => [p.id, p])))
 const templateMap = computed(() => new Map(allTemplates.value.map(t => [t.id, t])))
 const credMap     = computed(() => new Map(allCredentials.value.map(c => [c.id, c])))
+const hostMap     = computed(() => new Map(allHosts.value.map(h => [h.id, h.name])))
+const userMap     = computed(() => new Map(allUsers.value.map(u => [u.id, u.username || u.name || u.id])))
 
 function projectName(id: string | null): string { return id ? (projectMap.value.get(id)?.name || id) : '' }
 function templateName(id: string | null): string { return id ? (templateMap.value.get(id)?.name || id) : '' }
 function credName(id: string | null): string { return id ? (credMap.value.get(id)?.name || id) : '' }
+function userName(id: string | null): string { return id ? (userMap.value.get(id) || id) : '' }
 
 function actionTypeBadgeClass(t: string): string {
   return { ansible_playbook: 'badge-green', bash_script: 'badge-blue', account_push: 'badge-orange', rotate_secret: 'badge-red' }[t] || 'badge-blue'
 }
-function formatTriggeredBy(s: string): string {
-  if (!s) return '—'
-  if (s.startsWith('user:')) return '👤 User'
-  if (s.startsWith('schedule:')) return '📅 Schedule'
-  if (s.startsWith('zabbix_event:')) return '🔔 Zabbix'
-  if (s.startsWith('manual_trigger:')) return '🖱 Manual'
-  return s
+// Ported from the standalone Jobs page (JobRunsListView.vue) when its list moved into
+// this tab — resolves the actual username instead of just showing "👤 User".
+function triggeredByLabel(run: any): string {
+  if (run.triggered_by_kind === 'user' && run.triggered_by_user_id) {
+    return '👤 ' + userName(run.triggered_by_user_id)
+  }
+  const tb = run.triggered_by || ''
+  if (tb.startsWith('schedule:')) return '📅 Schedule'
+  if (tb.startsWith('zabbix_event:')) return '🔔 Zabbix'
+  if (tb.startsWith('manual_trigger:')) return '🖱 Manual'
+  return tb || '—'
+}
+function runHostsLabel(run: any): string {
+  const ids: string[] = run.target_host_ids || []
+  if (!ids.length) return '—'
+  const names = ids.map((id) => hostMap.value.get(id) || id)
+  if (names.length <= 2) return names.join(', ')
+  return `${names[0]}, ${names[1]} +${names.length - 2}`
+}
+function runHostsTitle(run: any): string {
+  return (run.target_host_ids || []).map((id: string) => hostMap.value.get(id) || id).join(', ')
+}
+function runCredentialLabel(run: any): string {
+  if (Object.keys(run.host_credentials || {}).length) return 'Per-host'
+  const cid = run.credential_id
+  if (!cid) return 'Default (push acct)'
+  return credName(cid) || cid
 }
 function runDuration(r: any): string {
   if (!r.started_at) return '—'
@@ -604,13 +701,14 @@ async function loadAll() {
     ])
     allTemplates.value = t; projects.value = p; serviceAvailable.value = true
 
-    const [sched, creds, hosts, groups] = await Promise.all([
+    const [sched, creds, hosts, groups, users] = await Promise.all([
       auth.isAdminOrSupport ? api.get('/schedules').then(r => r.data).catch(() => []) : Promise.resolve([]),
       auth.isAdminOrSupport ? api.get('/credentials').then(r => r.data).catch(() => []) : Promise.resolve([]),
       api.get('/hosts').then(r => r.data).catch(() => []),
       api.get('/host-groups').then(r => r.data).catch(() => []),
+      api.get('/users').then(r => r.data).catch(() => []),
     ])
-    schedules.value = sched; allCredentials.value = creds; allHosts.value = hosts; allHostGroups.value = groups
+    schedules.value = sched; allCredentials.value = creds; allHosts.value = hosts; allHostGroups.value = groups; allUsers.value = users
   } catch {
     serviceAvailable.value = false
   } finally { serviceLoading.value = false }
@@ -926,6 +1024,35 @@ async function deleteTemplate(t: any) {
   catch (e: any) { alert(e?.response?.data?.detail || 'Failed') }
 }
 
+// ── Bulk select/delete for the Playbooks & Scripts list view ──────────────
+const selectedTemplateIds = ref<Set<string>>(new Set())
+const allTemplatesSelected = computed(() =>
+  filteredPlaybookTemplates.value.length > 0 && filteredPlaybookTemplates.value.every((t: any) => selectedTemplateIds.value.has(t.id))
+)
+function toggleTemplateSelect(id: string) {
+  const s = new Set(selectedTemplateIds.value)
+  s.has(id) ? s.delete(id) : s.add(id)
+  selectedTemplateIds.value = s
+}
+function toggleSelectAllTemplates() {
+  selectedTemplateIds.value = allTemplatesSelected.value
+    ? new Set()
+    : new Set(filteredPlaybookTemplates.value.map((t: any) => t.id))
+}
+async function bulkDeleteTemplates() {
+  const n = selectedTemplateIds.value.size
+  if (!n) return
+  if (!await confirm(`Delete ${n} selected template${n === 1 ? '' : 's'}? This cannot be undone.`, { title: 'Delete Templates', danger: true, confirmLabel: 'Delete' })) return
+  const failures: string[] = []
+  for (const id of selectedTemplateIds.value) {
+    try { await api.delete(`/job-templates/${id}`) }
+    catch (e: any) { failures.push(e?.response?.data?.detail || id) }
+  }
+  selectedTemplateIds.value = new Set()
+  loadAll()
+  if (failures.length) alert(`${failures.length} of ${n} failed:\n${failures.join('\n')}`)
+}
+
 // ── Schedules modal ────────────────────────────────────────────────────────
 const _blankSchedForm = () => ({ name: '', job_template_id: '', cron_expression: '0 2 * * *', enabled: true })
 const schedDlg = reactive({ visible: false, isEdit: false, editingId: '', form: _blankSchedForm(), saving: false, error: '' })
@@ -958,7 +1085,16 @@ async function deleteSchedule(s: any) {
   catch (e: any) { alert(e?.response?.data?.detail || 'Failed') }
 }
 
-onMounted(loadAll)
+onMounted(async () => {
+  // loadRuns() itself no-ops while serviceAvailable is still false (its own guard,
+  // to avoid firing before the service is confirmed up) — loadAll() is what flips
+  // that flag, so it must run and finish FIRST or the initial fetch silently does
+  // nothing and the tab just sits empty until a manual Refresh click.
+  await loadAll()
+  // The old standalone /jobs page now redirects here with ?tab=runs so existing
+  // bookmarks/links still land on the right tab instead of just the default.
+  if (route.query.tab === 'runs') { autoTab.value = 'runs'; loadRuns() }
+})
 </script>
 
 <style scoped>
@@ -1005,6 +1141,14 @@ onMounted(loadAll)
 .svc-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
 .svc-desc { font-size: 13px; color: var(--text2); }
 .svc-desc code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px; }
+
+/* ── Playbooks & Scripts toolbar ─────────────────────────────────────────── */
+.pb-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-left: auto; }
+.view-toggle-btn { padding: 6px 12px; font-size: 12.5px; background: var(--bg2); color: var(--text2); border: none; border-right: 1px solid var(--border); cursor: pointer; }
+.view-toggle-btn:last-child { border-right: none; }
+.view-toggle-btn.active { background: var(--accent2); color: #fff; }
+.view-toggle-btn:hover:not(.active) { background: var(--bg3); color: var(--text); }
 
 /* ── Playbook card grid ───────────────────────────────────────────────────── */
 .playbook-grid {

@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { setToken } from '@/api/client'
 
-export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'automation', 'zabbix-integration', 'integration', 'platform', 'health', 'housekeeping', 'log-backend']
+export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'integration', 'platform', 'health', 'housekeeping', 'log-backend']
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -73,9 +73,10 @@ const router = createRouter({
       redirect: to => ({ path: `/sessions/${to.params.id}` }),
     },
     {
+      // The standalone Jobs list moved into Automation's "Recent Runs" tab — this
+      // redirect just keeps old bookmarks/links working, same pattern as /recordings.
       path: '/jobs',
-      name: 'jobs',
-      component: () => import('@/views/JobRunsListView.vue'),
+      redirect: '/automation?tab=runs',
     },
     {
       path: '/jobs/:id',

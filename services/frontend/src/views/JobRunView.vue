@@ -34,8 +34,8 @@
         <div class="card-header" style="font-size:13px">
           Output Log
           <div style="display:flex;align-items:center;gap:14px">
-            <button class="btn btn-sm" :disabled="!lines.length" @click="copyOutput" :title="copied ? 'Copied!' : 'Copy output'">
-              {{ copied ? '✓ Copied' : '⧉ Copy' }}
+            <button class="btn btn-sm" :disabled="!lines.length" @click="copyOutput" :title="copyError || (copied ? 'Copied!' : 'Copy output')">
+              {{ copied ? '✓ Copied' : (copyError ? '✕ Copy failed' : '⧉ Copy') }}
             </button>
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:12px;cursor:pointer">
               <input type="checkbox" v-model="autoScroll" />
@@ -189,12 +189,41 @@ async function rerun() {
 }
 
 const copied = ref(false)
+const copyError = ref('')
+
+// Fallback for when navigator.clipboard is missing or rejects (blocked permission,
+// non-standard browser context, etc.) — a hidden textarea + execCommand('copy') works
+// far more broadly, at the cost of being a deprecated API. Returns whether it worked.
+function legacyCopy(text: string): boolean {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.top = '-1000px'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  let ok = false
+  try { ok = document.execCommand('copy') } catch { ok = false }
+  document.body.removeChild(ta)
+  return ok
+}
+
 async function copyOutput() {
+  copyError.value = ''
+  const text = lines.value.join('\n')
   try {
-    await navigator.clipboard.writeText(lines.value.join('\n'))
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 1500)
-  } catch { /* clipboard unavailable */ }
+    if (!navigator.clipboard) throw new Error('Clipboard API unavailable in this browser context')
+    await navigator.clipboard.writeText(text)
+  } catch (e: any) {
+    if (!legacyCopy(text)) {
+      copyError.value = e?.message || 'Copy failed — your browser blocked clipboard access'
+      setTimeout(() => { copyError.value = '' }, 3000)
+      return
+    }
+  }
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 1500)
 }
 
 function statusClass(s: string) {

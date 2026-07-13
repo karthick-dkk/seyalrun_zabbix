@@ -111,11 +111,12 @@ async def list_templates(
 async def create_template(
     payload: TemplateCreate,
     role: str = Depends(get_user_role),
+    user_id: str = Depends(get_user_id),
     session: AsyncSession = Depends(get_session),
 ):
     if role not in ("superadmin", "admin", "automation"):
         raise HTTPException(status_code=403, detail="automation write access required")
-    tmpl = ZAJobTemplate(**payload.model_dump())
+    tmpl = ZAJobTemplate(**payload.model_dump(), created_by=user_id)
     session.add(tmpl)
     await session.commit()
     await session.refresh(tmpl)
@@ -304,7 +305,7 @@ def _out(t: ZAJobTemplate) -> dict:
         "credential_id": t.credential_id, "subject_credential_id": t.subject_credential_id,
         "survey_schema": t.survey_schema, "default_params": t.default_params,
         "allowed_param_keys": list(t.allowed_param_keys or []),
-        "quick_action": t.quick_action, "enabled": t.enabled,
+        "quick_action": t.quick_action, "enabled": t.enabled, "created_by": t.created_by,
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
