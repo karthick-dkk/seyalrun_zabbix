@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import stat
 import tempfile
 from typing import Callable
@@ -11,6 +12,15 @@ from typing import Callable
 from libs.pluginbase import ActionExecutor, RunRequest, RunResult
 
 from app._ssh_exec import run_command as _ssh_run
+
+
+def _quoted_args(raw: str) -> str:
+    """Shlex-split then shlex-quote each token, so script_args can never break out of
+    the `bash -s -- <args>` command line it's concatenated into (the script body itself
+    goes over stdin and is never shell-parsed — only these positional args are)."""
+    if not raw:
+        return ""
+    return " ".join(shlex.quote(tok) for tok in shlex.split(raw))
 
 
 class BashScriptExecutor(ActionExecutor):
@@ -28,7 +38,7 @@ class BashScriptExecutor(ActionExecutor):
             return RunResult(ok=False, output="no script_content provided", exit_code=1)
 
         if run_local or not request.target_host_ids:
-            return await self._run_local(script, publish_line)
+            return await self._run_local(script, request.params.get("script_args", ""), publish_line)
 
         results = []
         for host_id in request.target_host_ids:
@@ -38,14 +48,14 @@ class BashScriptExecutor(ActionExecutor):
         all_ok = all(results)
         return RunResult(ok=all_ok, output="", exit_code=0 if all_ok else 1)
 
-    async def _run_local(self, script: str, publish_line: Callable) -> RunResult:
+    async def _run_local(self, script: str, script_args: str, publish_line: Callable) -> RunResult:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
             f.write(script)
             tmp = f.name
         os.chmod(tmp, stat.S_IRWXU)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "bash", tmp,
+                "bash", tmp, *shlex.split(script_args or ""),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -93,17 +103,54 @@ class BashScriptExecutor(ActionExecutor):
                 return False, ""
             cred = cred_resp.json()
 
+            # Sudo/become password: sourced from the credential vault only — never a raw
+            # password in job params, which would otherwise sit in plaintext in za_job_runs
+            # (persisted for history/re-run and shown in the Run Details UI). A dedicated
+            # sudo_credential_id overrides; else fall back to the login credential itself
+            # (matches Ansible's own become_password-defaults-to-password behavior), which
+            # only works when that credential is password-type — an ssh_key login has no
+            # password to hand to `sudo -S`.
+            sudo_pw: str | None = None
+            use_sudo = bool(request.params.get("use_sudo"))
+            if use_sudo:
+                sudo_cred_id = request.params.get("sudo_credential_id") or cred_id
+                if sudo_cred_id == cred_id:
+                    sudo_cred = cred
+                else:
+                    sc_resp = await client.get(f"/api/v1/internal/credentials/{sudo_cred_id}/secret",
+                                               headers={"X-Service-Token": tok})
+                    if sc_resp.status_code != 200:
+                        await publish_line(f"[host:{host_id}] sudo credential lookup failed")
+                        return False, ""
+                    sudo_cred = sc_resp.json()
+                if sudo_cred.get("secret_type") != "password":
+                    await publish_line(f"[host:{host_id}] use_sudo requires a password-type credential "
+                                       f"(the resolved credential is {sudo_cred.get('secret_type')}) — "
+                                       f"set sudo_credential_id to a password credential")
+                    return False, ""
+                sudo_pw = sudo_cred.get("secret", {}).get("password", "")
+
         addr = host.get("ip") or host.get("ip_address") or host.get("hostname") or ""
         port = host.get("port") or host.get("ssh_port") or 22
-        await publish_line(f"[host:{addr}] connecting...")
+        args = _quoted_args(request.params.get("script_args", ""))
+        remote_cmd = f"bash -s -- {args}".strip() if args else "bash -s"
+        stdin_data = script
+        if use_sudo:
+            # sudo -S reads the password terminated by the first newline off stdin, then
+            # hands the REST of stdin to the child process — bash -s then reads the script
+            # body from what's left. -p '' suppresses sudo's own "[sudo] password:" prompt
+            # text so it never gets echoed into the captured output.
+            remote_cmd = f"sudo -S -p '' -- {remote_cmd}"
+            stdin_data = f"{sudo_pw}\n{script}"
+        await publish_line(f"[host:{addr}] connecting...{' (sudo)' if use_sudo else ''}")
         exit_code, stdout, stderr = await _ssh_run(
             host=addr,
             port=port,
             username=cred.get("username", "root"),
             secret_type=cred.get("secret_type", "password"),
             secret=cred.get("secret", {}),
-            command="bash -s",
-            stdin_data=script,
+            command=remote_cmd,
+            stdin_data=stdin_data,
         )
         for line in (stdout + stderr).splitlines():
             await publish_line(f"[host:{host_id}] {line}")

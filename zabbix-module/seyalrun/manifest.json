@@ -28,11 +28,6 @@
             "view": "seyalrun.embed",
             "layout": "layout.htmlpage"
         },
-        "seyalrun.jobs": {
-            "class": "Jobs",
-            "view": "seyalrun.embed",
-            "layout": "layout.htmlpage"
-        },
         "seyalrun.automation": {
             "class": "Automation",
             "view": "seyalrun.embed",

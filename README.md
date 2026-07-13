@@ -56,35 +56,6 @@ see [Quickstart](#quickstart) below, which uses `docker compose ... --build`
 against this checkout. The same local-DB setup (`ops/init-db.sh`) is shared
 by both paths.
 
-## Architecture (Phase 1)
-
-```
-                         ┌────────────────────────────┐
-   Browser / Zabbix      │         edge-proxy          │   only host-published
-   iframe  ───HTTPS───►  │  nginx, TLS termination     │   service (TLS on
-                         │  /        -> frontend       │   EDGE_HTTPS_PORT)
-                         │  /api/*   -> api-gateway    │
-                         └──────────────┬───────────────┘
-                                         │ seyalrun_net (internal bridge)
-                ┌────────────────────────┼─────────────────────────┐
-                │                        │                         │
-        ┌───────▼────────┐     ┌─────────▼─────────┐
-        │    frontend     │     │    api-gateway    │
-        │  Vue3 + nginx   │     │ FastAPI BFF: JWT/  │
-        │                 │     │ PAT auth, routing, │
-        │                 │     │ rate limiting      │
-        └─────────────────┘     └────┬──────────┬────┘
-                       X-Service-Token│          │X-Service-Token
-                                      │          │
-                          ┌───────────▼──┐   ┌───▼────────────┐
-                          │identity-service│  │inventory-service│
-                          │  port 8101     │  │   port 8102     │
-                          │  (internal)    │  │   (internal)    │
-                          └───────┬────────┘  └────────┬────────┘
-                                  │                     │
-                            seyalrun_identity     seyalrun_inventory
-                         (bare-metal Postgres/MySQL, or docker-compose.db.yml)
-```
 
 - **edge-proxy** is the *only* service published to the host (HTTP redirect
   on `EDGE_HTTP_PORT`, TLS on `EDGE_HTTPS_PORT`).

@@ -14,7 +14,6 @@
         <router-link v-if="auth.can('hosts')"     to="/hosts"    class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.hosts" /><span class="nav-label">Hosts</span></router-link>
         <router-link v-if="auth.can('assets')"    to="/assets"   class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.assets" /><span class="nav-label">Assets</span></router-link>
         <router-link v-if="auth.can('sessions')"  to="/sessions" class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.sessions" /><span class="nav-label">Sessions</span></router-link>
-        <router-link v-if="auth.can('jobs')" to="/jobs"       class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.jobRuns" /><span class="nav-label">Job Runs</span></router-link>
         <router-link v-if="auth.can('automation')" to="/automation" class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.automation" /><span class="nav-label">Automation</span></router-link>
         <template v-if="auth.canAnyAdmin()">
           <div class="nav-section-header"><span class="nav-label">Admin</span></div>
@@ -24,8 +23,6 @@
           <router-link v-if="auth.can('admin.credentials')"        to="/admin/credentials"        class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.key" /><span class="nav-label">Credentials</span></router-link>
           <router-link v-if="auth.can('admin.zones')"              to="/admin/zones"              class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.globe" /><span class="nav-label">Zones</span></router-link>
           <router-link v-if="auth.can('admin.security')"           to="/admin/security"           class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.shield" /><span class="nav-label">Security</span></router-link>
-          <router-link v-if="auth.can('admin.automation')"         to="/admin/automation"         class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.gear" /><span class="nav-label">Automation</span></router-link>
-          <router-link v-if="auth.can('admin.zabbix-integration')" to="/admin/zabbix-integration" class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.bell" /><span class="nav-label">Zabbix Integration</span></router-link>
           <router-link v-if="auth.can('admin.integration')"        to="/admin/integration"        class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.globe" /><span class="nav-label">Integration</span></router-link>
           <router-link v-if="auth.can('admin.health')"             to="/admin/health"             class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.clipboard" /><span class="nav-label">Health</span></router-link>
           <router-link v-if="auth.can('admin.housekeeping')"       to="/admin/housekeeping"       class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.gear" /><span class="nav-label">Housekeeping</span></router-link>
@@ -51,6 +48,15 @@
     <div class="main-content">
       <div v-if="!isEmbedded" class="topbar">
         <span class="topbar-title">{{ $route.meta.title || 'SeyalRun' }}</span>
+        <router-link
+          v-if="zabbixTokenWarning"
+          to="/admin/integration"
+          class="topbar-link"
+          style="color:var(--warn);border-color:rgba(210,153,34,0.4);background:rgba(210,153,34,0.08)"
+          title="Zabbix API token is missing or invalid — host sync and Zabbix reachability checks won't work until it's fixed"
+        >
+          ⚠ Zabbix API token issue
+        </router-link>
         <button class="topbar-btn" @click="openTerminal" title="SSH Terminal">
           <span v-html="ICONS.terminal" style="display:flex;align-items:center;" />
           SSH Terminal
@@ -84,7 +90,6 @@ const ICONS = {
   hosts:       _svg('<path d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25"/>'),
   assets:      _svg('<path d="M21 7.5l-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>'),
   sessions:    _svg('<path d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"/>'),
-  jobRuns:     _svg('<path d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"/>'),
   automation:  _svg('<path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/>'),
   users:       _svg('<path d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>'),
   lock:        _svg('<path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>'),
@@ -109,10 +114,15 @@ const collapsed = ref(false)
 // Zabbix link: prefer the URL configured in .env (Admin → Integration); fall back to the
 // same-host /zabbix path. Fetched once so the header button matches the Integration page.
 const zabbixUrl = ref(`${location.protocol}//${location.host}/zabbix/`)
+// True only once Zabbix integration is actually configured (an API URL is set) AND
+// the token is either missing or proven invalid — not shown at all during initial
+// setup (no URL configured yet), only once there's a real problem to fix.
+const zabbixTokenWarning = ref(false)
 onMounted(async () => {
   try {
     const { data } = await api.get('/integration/info')
     if (data?.zabbix_url) zabbixUrl.value = data.zabbix_url
+    zabbixTokenWarning.value = !!data?.configured && (!data?.token_configured || data?.token_valid === false)
   } catch { /* keep fallback */ }
 })
 

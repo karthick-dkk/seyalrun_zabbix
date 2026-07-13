@@ -12,7 +12,8 @@ use Zabbix\Core\CModule as CoreModule;
  * SeyalRun module entry point.
  *
  * Inserts a "SeyalRun" top-level menu item right after Monitoring (Dashboard,
- * Assets, SSH Hosts, Sessions, Jobs, Automation, Trigger Bindings — Trigger
+ * Assets, SSH Hosts, Sessions, Automation, Trigger Bindings — job runs live
+ * inside Automation's own "Recent Runs" tab, not a separate menu item; Trigger
  * Bindings only for Zabbix admins+), and, for super admins only, a "SeyalRun"
  * item under Administration for the platform-settings page.
  *
@@ -46,7 +47,6 @@ class Module extends CoreModule {
 					(new CMenuItem(_('Assets')))->setAction('seyalrun.assets'),
 					(new CMenuItem(_('SSH Hosts')))->setAction('seyalrun.hosts'),
 					(new CMenuItem(_('Sessions')))->setAction('seyalrun.sessions'),
-					(new CMenuItem(_('Jobs')))->setAction('seyalrun.jobs'),
 					(new CMenuItem(_('Automation')))->setAction('seyalrun.automation'),
 					...(CWebUser::getType() >= USER_TYPE_ZABBIX_ADMIN
 						? [(new CMenuItem(_('Trigger Bindings')))->setAction('seyalrun.bindings')]

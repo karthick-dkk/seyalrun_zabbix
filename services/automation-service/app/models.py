@@ -56,6 +56,9 @@ class ZAJobTemplate(Base):
     allowed_param_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     quick_action: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Nullable: templates created before this column existed, or via a path with no
+    # caller identity (e.g. seeded defaults), have no creator on record.
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 

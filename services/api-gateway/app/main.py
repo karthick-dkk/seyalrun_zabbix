@@ -224,9 +224,12 @@ async def auth_touch(request: Request):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 
-async def _integration_settings() -> tuple[str, str]:
-    """(console_url, api_url) — DB setting (superadmin-editable) wins over .env."""
-    db_console, db_api = "", ""
+async def _integration_settings() -> tuple[str, str, str]:
+    """(console_url, api_url, api_token) — DB setting (superadmin-editable) wins over
+    .env for console/api url; the token is DB-only (never had a .env fallback here —
+    it's never exposed to the browser, only used server-side for the token-validity
+    probe in integration_info() below)."""
+    db_console, db_api, db_token = "", "", ""
     try:
         tok = mint("api-gateway", "identity-service", settings.service_jwt_secret)
         r = await _http.client.get(
@@ -237,10 +240,12 @@ async def _integration_settings() -> tuple[str, str]:
             d = r.json()
             db_console = (d.get("zabbix_console_url") or "").strip()
             db_api = (d.get("zabbix_api_url") or "").strip()
+            db_token = (d.get("zabbix_api_token") or "").strip()
     except httpx.HTTPError:
         pass
     return (db_console or (settings.zabbix_console_url or "").strip(),
-            db_api or (settings.zabbix_api_url or "").strip())
+            db_api or (settings.zabbix_api_url or "").strip(),
+            db_token)
 
 
 @app.get("/api/v1/integration/info")
@@ -252,13 +257,17 @@ async def integration_info(request: Request):
         await resolve_identity(request.headers.get("authorization"))
     except AuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-    console, api_url = await _integration_settings()
+    console, api_url, api_token = await _integration_settings()
     # Only trust a console URL that actually looks like one (guards against a leaked
     # .env.example comment becoming the value); otherwise fall back to the API URL.
     if not console.startswith("http"):
         console = ""
     url = (console or api_url or "").rstrip("/")
     reachable, version = False, ""
+    # token_valid stays None (not tested) when there's no token to test, or the plain
+    # API reachability check above already failed — no point probing auth on a
+    # server that isn't even answering. Only True/False once genuinely tested.
+    token_valid: bool | None = None
     if api_url:
         api = api_url.rstrip("/") + "/api_jsonrpc.php"
         try:
@@ -266,9 +275,22 @@ async def integration_info(request: Request):
                 r = await client.post(api, json={"jsonrpc": "2.0", "method": "apiinfo.version", "params": {}, "id": 1})
                 version = str((r.json() or {}).get("result", ""))
                 reachable = bool(version)
+                if reachable and api_token:
+                    # Cheap authenticated call — proves the token actually works, which
+                    # apiinfo.version (unauthenticated) can never tell us. A bad/expired
+                    # token comes back as a JSON-RPC error, not an HTTP error.
+                    r2 = await client.post(
+                        api, json={"jsonrpc": "2.0", "method": "host.get", "params": {"countOutput": True}, "id": 1},
+                        headers={"Authorization": f"Bearer {api_token}"},
+                    )
+                    token_valid = "error" not in (r2.json() or {})
         except Exception:  # noqa: BLE001
             reachable = False
-    return {"zabbix_url": url, "api_url": api_url or "", "configured": bool(api_url), "reachable": reachable, "version": version}
+    return {
+        "zabbix_url": url, "api_url": api_url or "", "configured": bool(api_url),
+        "reachable": reachable, "version": version,
+        "token_configured": bool(api_token), "token_valid": token_valid,
+    }
 
 
 @app.get("/api/v1/admin/attest")
