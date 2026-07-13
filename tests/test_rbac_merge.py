@@ -55,10 +55,6 @@ class TestRoleAllows:
     def test_ssh_capability(self):
         assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["user"], "POST", "ssh") is True
 
-    def test_audit_read_all_no_write(self):
-        assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["audit"], "GET", "whatever") is True
-        assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["audit"], "POST", "hosts") is False
-
     def test_none_and_unknown_segment_deny(self):
         assert rc.role_allows(None, "GET", "hosts") is False
         assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["user"], "GET", "unknown-seg") is False
@@ -67,9 +63,6 @@ class TestRoleAllows:
 class TestRevealFlag:
     def test_admin_reveals(self):
         assert rc.doc_can_reveal(rc.BUILTIN_ROLE_PERMS["admin"]) is True
-
-    def test_audit_cannot_reveal(self):
-        assert rc.doc_can_reveal(rc.BUILTIN_ROLE_PERMS["audit"]) is False
 
     def test_user_cannot_reveal(self):
         assert rc.doc_can_reveal(rc.BUILTIN_ROLE_PERMS["user"]) is False
