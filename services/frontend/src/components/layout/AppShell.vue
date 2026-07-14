@@ -3,10 +3,8 @@
     <!-- Sidebar — hidden when embedded inside Zabbix (its native menu provides navigation) -->
     <nav v-if="!isEmbedded" class="sidebar" :class="{ collapsed }">
       <div class="sidebar-logo">
-        <a class="logo-link" href="https://seyalrun.com" target="_blank" rel="noopener" title="SeyalRun website">
-          <span class="logo-icon" v-html="ICONS.logo" />
-          <span class="logo-text">SeyalRun</span>
-        </a>
+        <span class="logo-icon" v-html="ICONS.logo" />
+        <span class="logo-text">SeyalRun</span>
         <button class="sidebar-collapse-btn" @click="collapsed = !collapsed" :title="collapsed ? 'Expand' : 'Collapse'">
           <span v-html="collapsed ? ICONS.chevronRight : ICONS.chevronLeft" />
         </button>
