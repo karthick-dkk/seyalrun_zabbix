@@ -1,8 +1,6 @@
-# [SeyalRun](https://seyalrun.com/) Zabbix 
+# [SeyalRun](https://seyalrun.com/)
 
-SeyalRun-zabbix is a ground-up microservices rewrite of the [SeyalRun](https://seyalrun.com/) DevOps
-console: a PAM (Privileged Access Management) layer for SSH-managed hosts,
-embeddable as an iframe inside Zabbix.
+A standalone PAM and Automation platform for your server fleet. 
 
 <img width="2834" height="1630" alt="image" src="https://github.com/user-attachments/assets/68872c8c-c21c-4da1-a950-c42e9ea68190" />
 
