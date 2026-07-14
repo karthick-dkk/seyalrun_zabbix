@@ -172,7 +172,7 @@ const activeLabel = computed(() => {
    above); toggling is manual everywhere. */
 .admin-nav.collapsed { width: 64px; }
 .admin-nav.collapsed .admin-nav-header { justify-content: center; padding: 0 0 14px; }
-.admin-nav.collapsed .admin-nav-item { justify-content: center; padding: 9px 0; margin: 0 10px; gap: 0; }
+.admin-nav.collapsed .admin-nav-item { justify-content: center; padding: 9px 0 9px 6px; margin: 0 10px; gap: 0; }
 .admin-nav.collapsed .admin-nav-group { margin-bottom: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .admin-nav.collapsed .admin-nav-group:first-child { border-top: none; padding-top: 0; }
 
