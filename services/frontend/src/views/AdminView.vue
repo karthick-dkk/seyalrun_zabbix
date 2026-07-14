@@ -40,6 +40,7 @@
         <ZonesAdmin v-else-if="section === 'zones'" />
         <SecurityAdmin v-else-if="section === 'security'" />
         <IntegrationAdmin v-else-if="section === 'integration'" />
+        <TriggerBindingsAdmin v-else-if="section === 'trigger-bindings'" />
         <PlatformSettingsAdmin v-else-if="section === 'platform'" />
         <HealthAdmin v-else-if="section === 'health'" />
         <HousekeepingAdmin v-else-if="section === 'housekeeping'" />
@@ -61,6 +62,7 @@ import CredentialsAdmin from './admin/CredentialsAdmin.vue'
 import ZonesAdmin from './admin/ZonesAdmin.vue'
 import SecurityAdmin from './admin/SecurityAdmin.vue'
 import IntegrationAdmin from './admin/IntegrationAdmin.vue'
+import TriggerBindingsAdmin from './admin/TriggerBindingsAdmin.vue'
 import PlatformSettingsAdmin from './admin/PlatformSettingsAdmin.vue'
 import HealthAdmin from './admin/HealthAdmin.vue'
 import HousekeepingAdmin from './admin/HousekeepingAdmin.vue'
@@ -95,6 +97,7 @@ const ICONS = {
   trash:       _svg('<path d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>'),
   archive:     _svg('<path d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>'),
   list:        _svg('<path d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/>'),
+  bolt:        _svg('<path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/>'),
   chevronRight: _svg('<path d="M8.25 4.5l7.5 7.5-7.5 7.5"/>'),
   chevronLeft:  _svg('<path d="M15.75 19.5L8.25 12l7.5-7.5"/>'),
 }
@@ -114,6 +117,7 @@ const GROUPS = [
   ] },
   { label: 'Automation', tabs: [
     { area: 'admin.integration', to: '/admin/integration', label: 'Integration', icon: ICONS.link },
+    { area: 'admin.integration', to: '/admin/trigger-bindings', label: 'Trigger Bindings', icon: ICONS.bolt },
     { area: 'admin.platform', to: '/admin/platform', label: 'SeyalRun Settings', icon: ICONS.gear },
   ] },
   { label: 'Platform', tabs: [

@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { setToken } from '@/api/client'
 
-export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'integration', 'platform', 'health', 'housekeeping', 'log-backend']
+export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'integration', 'trigger-bindings', 'platform', 'health', 'housekeeping', 'log-backend']
 
 const router = createRouter({
   history: createWebHashHistory(),
