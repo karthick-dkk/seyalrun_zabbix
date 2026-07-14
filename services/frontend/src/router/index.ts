@@ -110,6 +110,13 @@ function areaFor(to: any): string | null {
   if (p.startsWith('/zbx')) return 'jobs'   // 'Run from Zabbix' console page is gated with jobs
   if (p.startsWith('/admin/')) {
     const section = (to.params?.section as string) || p.split('/')[2] || ''
+    // Trigger Bindings is its own route/page again. 'admin.zabbix-integration'
+    // is the pre-existing gateway nav area for it (rbac.py _NAV_SEGMENTS ->
+    // GET trigger-bindings) — orphaned since the old ZabbixIntegrationAdmin.vue
+    // page was merged into IntegrationAdmin.vue, now reused for its original
+    // purpose. Without this override, areaFor() derives 'admin.trigger-bindings',
+    // which nothing grants, so the guard bounces everyone to Dashboard.
+    if (section === 'trigger-bindings') return 'admin.zabbix-integration'
     return section ? `admin.${section}` : null
   }
   return null

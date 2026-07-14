@@ -117,7 +117,7 @@ const GROUPS = [
   ] },
   { label: 'Automation', tabs: [
     { area: 'admin.integration', to: '/admin/integration', label: 'Integration', icon: ICONS.link },
-    { area: 'admin.integration', to: '/admin/trigger-bindings', label: 'Trigger Bindings', icon: ICONS.bolt },
+    { area: 'admin.zabbix-integration', to: '/admin/trigger-bindings', label: 'Trigger Bindings', icon: ICONS.bolt },
     { area: 'admin.platform', to: '/admin/platform', label: 'SeyalRun Settings', icon: ICONS.gear },
   ] },
   { label: 'Platform', tabs: [

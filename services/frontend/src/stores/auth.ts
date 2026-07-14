@@ -53,6 +53,7 @@ const AREA_ROLES: Record<string, string[]> = {
   'admin.automation':       ['superadmin', 'admin', 'support'],
   'admin.zabbix-integration': ['superadmin', 'admin', 'support'],
   'admin.integration':      ['superadmin'],
+  'admin.platform':         ['superadmin'],
   'admin.health':           ['superadmin', 'admin', 'support'],
   'admin.housekeeping':     ['superadmin'],
   'admin.log-backend':      ['superadmin'],
