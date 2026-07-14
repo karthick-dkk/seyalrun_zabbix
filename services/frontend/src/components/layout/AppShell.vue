@@ -3,8 +3,10 @@
     <!-- Sidebar — hidden when embedded inside Zabbix (its native menu provides navigation) -->
     <nav v-if="!isEmbedded" class="sidebar" :class="{ collapsed }">
       <div class="sidebar-logo">
-        <span class="logo-icon" v-html="ICONS.logo" />
-        <span class="logo-text">SeyalRun</span>
+        <a class="logo-link" href="https://seyalrun.com" target="_blank" rel="noopener" title="SeyalRun website">
+          <span class="logo-icon" v-html="ICONS.logo" />
+          <span class="logo-text">SeyalRun</span>
+        </a>
         <button class="sidebar-collapse-btn" @click="collapsed = !collapsed" :title="collapsed ? 'Expand' : 'Collapse'">
           <span v-html="collapsed ? ICONS.chevronRight : ICONS.chevronLeft" />
         </button>
@@ -42,6 +44,7 @@
           <span class="nav-label">Logout</span>
         </button>
       </div>
+      <div v-if="appVersion" class="sidebar-version">v{{ appVersion }}</div>
     </nav>
 
     <!-- Main -->
@@ -64,6 +67,10 @@
         <a class="topbar-link" :href="zabbixUrl" target="_blank" title="Back to Zabbix">
           <span v-html="ICONS.arrowUpRight" style="display:flex;align-items:center;" />
           Zabbix
+        </a>
+        <a class="topbar-link" href="https://seyalrun.com/guide/introduction" target="_blank" rel="noopener" title="SeyalRun documentation">
+          <span v-html="ICONS.docs" style="display:flex;align-items:center;" />
+          Docs
         </a>
       </div>
       <slot />
@@ -100,6 +107,7 @@ const ICONS = {
   bell:        _svg('<path d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/>'),
   clipboard:   _svg('<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>'),
   terminal:    _svg('<path d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"/>'),
+  docs:        _svg('<path d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>'),
   arrowUpRight: _svg('<path d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>'),
   chevronRight: _svg('<path d="M8.25 4.5l7.5 7.5-7.5 7.5"/>'),
   chevronLeft:  _svg('<path d="M15.75 19.5L8.25 12l7.5-7.5"/>'),
@@ -110,6 +118,9 @@ const ICONS = {
 // the two menus to visually overlap. Detect the iframe and hide ours.
 const isEmbedded = window.self !== window.top
 const collapsed = ref(false)
+// Injected at Docker build time from the release tag (see frontend/Dockerfile);
+// empty in local dev, where there's no release version to show.
+const appVersion = import.meta.env.VITE_APP_VERSION as string | undefined
 
 // Zabbix link: prefer the URL configured in .env (Admin → Integration); fall back to the
 // same-host /zabbix path. Fetched once so the header button matches the Integration page.
