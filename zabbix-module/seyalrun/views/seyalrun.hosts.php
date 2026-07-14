@@ -1,6 +1,7 @@
 <?php declare(strict_types = 1);
 /**
- * @var array $data  ['hosts' => array[], 'configured' => bool, 'reachable' => bool, 'seyalrun_url' => string]
+ * @var array $data  ['hosts' => array[], 'configured' => bool, 'reachable' => bool, 'seyalrun_url' => string,
+ *                     'version' => string, 'website_url' => string]
  *
  * Shows SeyalRun's OWN host inventory (same data as SeyalRun's Assets page),
  * styled to match it pixel-for-pixel — same design tokens and .badge /
@@ -92,6 +93,11 @@
 			</tbody>
 		</table>
 	</div>
+
+	<div class="sr-footer">
+		<a href="<?= htmlspecialchars($data['website_url'], ENT_QUOTES) ?>" target="_blank" rel="noopener">SeyalRun</a>
+		<span>v<?= htmlspecialchars($data['version'], ENT_QUOTES) ?></span>
+	</div>
 </div>
 <style>
 	/* Design tokens copied 1:1 from services/frontend/src/assets/style.css so this
@@ -161,4 +167,10 @@
 
 	.sr-notice { max-width: 900px; padding: 12px 14px; margin-bottom: 14px; border-radius: var(--radius); font-size: 13px; line-height: 1.6; }
 	.sr-notice--error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.35); color: #f87171; }
+
+	/* Pinned to the bottom of .sr-wrap the same way Zabbix's own (now-hidden)
+	 * footer pinned itself — margin-top: auto inside the flex column. */
+	.sr-footer { margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 10px 0 4px; font-size: 11px; color: var(--text2) !important; }
+	.sr-footer a { color: var(--accent2) !important; text-decoration: none; }
+	.sr-footer a:hover { text-decoration: underline; }
 </style>

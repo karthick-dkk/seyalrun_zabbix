@@ -3,11 +3,13 @@
 namespace Modules\SeyalRun\Actions;
 
 require_once __DIR__ . '/../lib/SsoClient.php';
+require_once __DIR__ . '/../lib/Version.php';
 
 use CController;
 use CControllerResponseData;
 use CWebUser;
 use Modules\SeyalRun\Lib\SsoClient;
+use Modules\SeyalRun\Lib\Version;
 
 /**
  * Native "SeyalRun · SSH Hosts" page — a native Zabbix page (not an iframe) that
@@ -123,6 +125,8 @@ class Hosts extends CController {
 			'configured' => $sso->isConfigured(),
 			'reachable' => $reachable,
 			'seyalrun_url' => $sso->baseUrl(),
+			'version' => Version::CURRENT,
+			'website_url' => Version::WEBSITE_URL,
 		]));
 	}
 }
