@@ -257,9 +257,12 @@ async def search_live_problems(q: str = "", limit: int = 20, min_severity: int =
 
     api_url = zbx_api_url.rstrip("/") + "/api_jsonrpc.php"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {zbx_api_token}"}
+    # problem.get on this Zabbix version rejects selectHosts (confirmed live:
+    # "Invalid parameter '/': unexpected parameter 'selectHosts'" — unlike
+    # trigger.get/host.get, which both accept it). Resolve host names via a
+    # second trigger.get call instead, keyed on each problem's objectid.
     params: dict = {
         "output": ["eventid", "objectid", "name", "severity", "clock"],
-        "selectHosts": ["hostid", "name"],
         "recent": False,
         "sortfield": ["eventid"],
         "sortorder": "DESC",
@@ -278,13 +281,29 @@ async def search_live_problems(q: str = "", limit: int = 20, min_severity: int =
         resp.raise_for_status()
         data = resp.json()
 
-    if "error" in data:
-        raise HTTPException(status_code=502, detail=f"Zabbix API error: {data['error'].get('data', data['error'])}")
+        if "error" in data:
+            raise HTTPException(status_code=502, detail=f"Zabbix API error: {data['error'].get('data', data['error'])}")
+
+        problems = data.get("result", [])
+        trigger_ids = sorted({p["objectid"] for p in problems if p.get("objectid")})
+        host_by_trigger: dict[str, dict] = {}
+        if trigger_ids:
+            resp2 = await client.post(api_url, headers=headers, json={
+                "jsonrpc": "2.0", "method": "trigger.get", "id": 2,
+                "params": {"triggerids": trigger_ids, "output": ["triggerid"], "selectHosts": ["hostid", "name"]},
+            })
+            resp2.raise_for_status()
+            data2 = resp2.json()
+            if "error" not in data2:
+                for t in data2.get("result", []):
+                    hosts = t.get("hosts", [])
+                    if hosts:
+                        host_by_trigger[t["triggerid"]] = hosts[0]
 
     out = []
-    for p in data.get("result", []):
-        hosts = p.get("hosts", [])
-        host_name = hosts[0]["name"] if hosts else ""
+    for p in problems:
+        host = host_by_trigger.get(p.get("objectid", ""), {})
+        host_name = host.get("name", "")
         severity = int(p.get("severity", 0) or 0)
         out.append({
             "id": p["eventid"],
@@ -292,7 +311,7 @@ async def search_live_problems(q: str = "", limit: int = 20, min_severity: int =
             "sublabel": f"{host_name} · sev {severity}" if host_name else f"sev {severity}",
             "triggerid": p.get("objectid", ""),
             "host_name": host_name,
-            "hostid": hosts[0]["hostid"] if hosts else "",
+            "hostid": host.get("hostid", ""),
             "severity": severity,
             "eventid": p["eventid"],
         })
