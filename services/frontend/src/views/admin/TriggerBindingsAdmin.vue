@@ -50,7 +50,7 @@
 
     <!-- ── Trigger Binding modal ─────────────────────────────────────────── -->
     <div v-if="modal.open" class="modal-overlay" @click.self="modal.open = false">
-      <div class="modal" style="max-width:540px">
+      <div class="modal" style="width:50vw; min-width:480px; max-width:820px">
         <div class="modal-header">{{ modal.id ? 'Edit' : 'Create' }} Trigger Binding</div>
         <div class="modal-body">
           <label class="form-label">Name</label>
@@ -99,9 +99,9 @@
 
     <!-- ── Create from Live Problem: search, then hand off to the modal above ── -->
     <div v-if="fromProblem.open" class="modal-overlay" @click.self="fromProblem.open = false">
-      <div class="modal" style="max-width:480px">
+      <div class="modal" style="width:50vw; min-width:420px; max-width:760px">
         <div class="modal-header">Create Binding from Live Problem</div>
-        <div class="modal-body">
+        <div class="modal-body" style="min-height:340px">
           <label class="form-label">Live Problem</label>
           <AsyncPicker v-model="problemPick" :search-fn="searchLiveProblems" :multiple="false"
                        placeholder="Search current firing problems…" />
