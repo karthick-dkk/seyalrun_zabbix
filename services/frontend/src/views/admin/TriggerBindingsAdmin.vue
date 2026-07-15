@@ -57,10 +57,8 @@
           <input v-model="modal.name" class="input" placeholder="Binding name" />
 
           <label class="form-label" style="margin-top:12px">Job Template</label>
-          <select v-model="modal.job_template_id" class="input">
-            <option value="">— select template —</option>
-            <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
-          </select>
+          <AsyncPicker v-model="templatePick" :search-fn="searchTemplates" :multiple="false"
+                       placeholder="Search job templates…" />
 
           <label class="form-label" style="margin-top:12px">Zabbix Trigger (optional, blank = any)</label>
           <AsyncPicker v-model="triggerPick" :search-fn="searchTriggers" :multiple="false"
@@ -152,6 +150,15 @@ async function searchTriggers(query: string): Promise<PickerItem[]> {
   return api.get('/triggers/search', { params: { q: query, limit: 20 } }).then(r => r.data)
 }
 
+const templatePick = ref<PickerItem[]>([])
+watch(templatePick, (v) => { modal.job_template_id = v[0]?.id || '' })
+
+async function searchTemplates(query: string): Promise<PickerItem[]> {
+  const q = query.trim().toLowerCase()
+  return templates.value.filter((t: any) => !q || t.name.toLowerCase().includes(q))
+    .slice(0, 20).map((t: any) => ({ id: t.id, label: t.name }))
+}
+
 async function loadBindings() {
   bindingsLoading.value = true
   try {
@@ -175,6 +182,7 @@ function openCreate() {
     severity_min: 0, post_result_to_zabbix: true, enabled: true,
   })
   triggerPick.value = []
+  templatePick.value = []
 }
 function openEdit(b: any) {
   Object.assign(modal, {
@@ -188,6 +196,9 @@ function openEdit(b: any) {
   // still shows the right label even if that trigger's since been deleted).
   triggerPick.value = b.zabbix_triggerid
     ? [{ id: b.zabbix_triggerid, label: b.zabbix_trigger_name || b.zabbix_triggerid, sublabel: '' }]
+    : []
+  templatePick.value = b.job_template_id
+    ? [{ id: b.job_template_id, label: templateName(b.job_template_id) }]
     : []
 }
 async function saveBinding() {
@@ -236,6 +247,7 @@ function useSelectedProblem() {
   triggerPick.value = p.triggerid
     ? [{ id: p.triggerid, label: p.label, sublabel: p.host_name || '' }]
     : []
+  templatePick.value = []
 }
 async function removeBinding(b: any) {
   if (!confirm(`Delete trigger binding "${b.name}"?`)) return

@@ -211,7 +211,6 @@ async def search_triggers(q: str = "", limit: int = 20):
         "sortfield": "priority",
         "sortorder": "DESC",
         "limit": max(1, min(limit, 50)),
-        "monitored": True,
     }
     if q.strip():
         params["search"] = {"description": q.strip()}
