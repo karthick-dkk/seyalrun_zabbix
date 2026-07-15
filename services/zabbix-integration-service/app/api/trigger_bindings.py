@@ -213,8 +213,12 @@ async def search_triggers(q: str = "", limit: int = 20):
         "limit": max(1, min(limit, 50)),
     }
     if q.strip():
+        # No searchWildcardsEnabled: Zabbix's default (false) already does a
+        # case-insensitive substring match. Setting it true WITHOUT literal
+        # "*" wildcards in the query flips this to requiring an exact match
+        # instead — confirmed live (searching "Redis" returned zero results
+        # with the flag set, five real matches without it).
         params["search"] = {"description": q.strip()}
-        params["searchWildcardsEnabled"] = True
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(api_url, headers=headers, json={
@@ -270,8 +274,9 @@ async def search_live_problems(q: str = "", limit: int = 20, min_severity: int =
     if min_severity:
         params["severities"] = list(range(min_severity, 6))
     if q.strip():
+        # Same fix as search_triggers() above — no searchWildcardsEnabled,
+        # so Zabbix does its default case-insensitive substring match.
         params["search"] = {"name": q.strip()}
-        params["searchWildcardsEnabled"] = True
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(api_url, headers=headers, json={
