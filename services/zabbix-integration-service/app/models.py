@@ -25,6 +25,10 @@ class ZAZabbixTriggerBinding(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     job_template_id: Mapped[str] = mapped_column(String(36), nullable=False)
     zabbix_triggerid: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Cached at bind-time from the search picker's selected label, so the list
+    # view and the edit modal can show a human-readable name without a live
+    # Zabbix lookup (which would fail silently if the trigger was since deleted).
+    zabbix_trigger_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     zabbix_host_group: Mapped[str | None] = mapped_column(String(200), nullable=True)
     severity_min: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     target_scope: Mapped[str] = mapped_column(String(20), nullable=False, default="affected_host")
