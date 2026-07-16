@@ -36,7 +36,7 @@
             <td><span :class="b.enabled ? 'badge badge-green' : 'badge badge-gray'">{{ b.enabled ? 'Enabled' : 'Disabled' }}</span></td>
             <td>
               <div style="display:flex;gap:8px;justify-content:flex-end">
-                <button class="btn-pill btn-pill-outline" @click="manualTrigger(b)">▶ Run</button>
+                <button class="btn-pill btn-pill-outline" @click="openRun(b)">▶ Run</button>
                 <button class="btn-pill btn-pill-outline" @click="openEdit(b)">✎ Edit</button>
                 <button class="btn-pill btn-pill-outline" style="color:var(--danger);border-color:var(--danger)" @click="removeBinding(b)">🗑</button>
               </div>
@@ -110,11 +110,68 @@
         </div>
       </div>
     </div>
+
+    <!-- ── Run: resolve/choose a host, optional connectivity test, then dispatch ── -->
+    <div v-if="run.open" class="modal-overlay" @click.self="run.open = false">
+      <div class="modal" style="width:50vw; min-width:460px; max-width:720px">
+        <div class="modal-header">Run "{{ run.binding?.name }}"</div>
+        <div class="modal-body">
+          <label class="form-label">Target host</label>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <button class="btn-pill" :class="run.mode === 'default' ? 'btn-pill-solid' : 'btn-pill-outline'"
+                    :disabled="!run.binding?.zabbix_triggerid" @click="run.mode = 'default'">
+              Default host (from Zabbix)
+            </button>
+            <button class="btn-pill" :class="run.mode === 'choose' ? 'btn-pill-solid' : 'btn-pill-outline'"
+                    @click="run.mode = 'choose'">
+              Choose host
+            </button>
+          </div>
+
+          <template v-if="!run.binding?.zabbix_triggerid">
+            <div style="font-size:12px;color:var(--text2);margin-bottom:10px">
+              This binding has no specific trigger (host-group binding) — pick a host below.
+            </div>
+          </template>
+          <template v-else-if="run.mode === 'default'">
+            <div v-if="run.hostLoading" style="font-size:13px;color:var(--text2)">Resolving host from Zabbix…</div>
+            <div v-else-if="run.hostError" style="font-size:12px;color:var(--danger)">{{ run.hostError }}</div>
+            <div v-else-if="run.resolvedHost" style="font-size:13px;padding:10px 12px;background:var(--bg3);border-radius:var(--radius)">
+              <strong>{{ run.resolvedHost.name }}</strong>
+              <span style="color:var(--text2);margin-left:8px">{{ run.resolvedHost.ip }}</span>
+            </div>
+          </template>
+          <template v-else>
+            <AsyncPicker v-model="run.hostPick" :search-fn="searchHosts" :multiple="false" placeholder="Search hosts…" />
+          </template>
+
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+            <button class="btn" :disabled="!effectiveHostId || run.testing" @click="testConnection">
+              {{ run.testing ? 'Testing…' : '🔌 Test Connection' }}
+            </button>
+            <div v-if="run.testResult" style="margin-top:10px">
+              <div v-if="run.testResult.ok" style="font-size:12.5px;color:var(--accent)">✓ Connected</div>
+              <template v-else>
+                <div style="font-size:12.5px;color:var(--danger)">✗ Connection failed</div>
+                <pre style="margin-top:6px;padding:10px 12px;background:var(--bg3);border-radius:var(--radius);font-size:11.5px;color:var(--text2);white-space:pre-wrap;max-height:160px;overflow-y:auto">{{ run.testResult.output }}</pre>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" @click="run.open = false">Cancel</button>
+          <button class="btn btn-primary" :disabled="!effectiveHostId || run.testResult?.ok === false || run.running"
+                  @click="confirmRun">
+            {{ run.running ? 'Starting…' : '▶ Run' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch, onMounted } from 'vue'
+import { computed, reactive, ref, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api/client'
 import AsyncPicker, { type PickerItem } from '@/components/common/AsyncPicker.vue'
@@ -254,10 +311,94 @@ async function removeBinding(b: any) {
   await api.delete(`/trigger-bindings/${b.id}`)
   await loadBindings()
 }
-async function manualTrigger(b: any) {
-  const { data } = await api.post('/triggers/manual', { binding_id: b.id })
-  if (data.run_id) {
-    router.push(`/jobs/${data.run_id}`)
+
+// ── Run: resolve/choose a host, optional connectivity test, then dispatch ──
+// Replaces the old manualTrigger(), which posted { binding_id } with NO
+// host — the executor then silently ran the script/playbook INSIDE the
+// automation-service container itself (its "no target host" fallback),
+// instead of on any real target. Confirmed live: a "Docker ps" bash_script
+// binding run this way failed with "sudo: command not found" because it
+// ran in a container that has no sudo, not on the intended host. A host is
+// now mandatory — either resolved from the trigger's Zabbix host, or
+// explicitly chosen — before Run is enabled at all.
+const allHosts = ref<any[]>([])
+
+const run = reactive({
+  open: false, binding: null as any,
+  mode: 'default' as 'default' | 'choose',
+  hostLoading: false, hostError: '', resolvedHost: null as any,
+  hostPick: [] as PickerItem[],
+  testing: false, testResult: null as { ok: boolean; output: string } | null,
+  running: false,
+})
+
+const effectiveHostId = computed(() =>
+  run.mode === 'default' ? (run.resolvedHost?.id || '') : (run.hostPick[0]?.id || '')
+)
+
+async function loadAllHosts() {
+  if (allHosts.value.length) return
+  allHosts.value = await api.get('/hosts').then(r => r.data).catch(() => [])
+}
+
+async function searchHosts(query: string): Promise<PickerItem[]> {
+  const q = query.trim().toLowerCase()
+  return allHosts.value.filter((h: any) => !q || h.name.toLowerCase().includes(q) || (h.ip || '').includes(q))
+    .slice(0, 20).map((h: any) => ({ id: h.id, label: h.name, sublabel: h.ip }))
+}
+
+async function openRun(b: any) {
+  Object.assign(run, {
+    open: true, binding: b, mode: b.zabbix_triggerid ? 'default' : 'choose',
+    hostLoading: false, hostError: '', resolvedHost: null,
+    testing: false, testResult: null, running: false,
+  })
+  run.hostPick = []
+  await loadAllHosts()
+  if (b.zabbix_triggerid) await resolveDefaultHost(b)
+}
+
+async function resolveDefaultHost(b: any) {
+  run.hostLoading = true; run.hostError = ''; run.resolvedHost = null
+  try {
+    const { data } = await api.get('/triggers/host-for-trigger', { params: { triggerid: b.zabbix_triggerid } })
+    const match = allHosts.value.find((h: any) => String(h.zabbix_hostid) === String(data.zabbix_hostid))
+    if (!match) {
+      run.hostError = `Zabbix host "${data.zabbix_host_name}" isn't linked to a SeyalRun host — choose one manually.`
+      run.mode = 'choose'
+    } else {
+      run.resolvedHost = match
+    }
+  } catch (e: any) {
+    run.hostError = e?.response?.data?.detail || 'Could not resolve host from Zabbix'
+    run.mode = 'choose'
+  } finally {
+    run.hostLoading = false
+  }
+}
+
+async function testConnection() {
+  if (!effectiveHostId.value) return
+  run.testing = true; run.testResult = null
+  try {
+    const { data } = await api.post('/test-connection', { host_id: effectiveHostId.value })
+    run.testResult = data
+  } catch (e: any) {
+    run.testResult = { ok: false, output: e?.response?.data?.detail || 'Test request failed' }
+  } finally {
+    run.testing = false
+  }
+}
+
+async function confirmRun() {
+  if (!effectiveHostId.value || run.testResult?.ok === false) return
+  run.running = true
+  try {
+    const { data } = await api.post('/triggers/manual', { binding_id: run.binding.id, host_id: effectiveHostId.value })
+    run.open = false
+    if (data.run_id) router.push(`/jobs/${data.run_id}`)
+  } finally {
+    run.running = false
   }
 }
 

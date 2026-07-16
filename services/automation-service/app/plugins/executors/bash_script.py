@@ -37,8 +37,17 @@ class BashScriptExecutor(ActionExecutor):
         if not script:
             return RunResult(ok=False, output="no script_content provided", exit_code=1)
 
-        if run_local or not request.target_host_ids:
+        # run_local is an explicit opt-in (a script that intentionally targets no
+        # host) — it must never be inferred from "no host was resolved/selected".
+        # That used to fall through to the same local-run path, which silently
+        # executed the script INSIDE this container instead of failing loudly —
+        # confirmed live: a binding run with no host produced "sudo: command not
+        # found" because it ran here, not on any real target.
+        if run_local:
             return await self._run_local(script, request.params.get("script_args", ""), publish_line)
+
+        if not request.target_host_ids:
+            return RunResult(ok=False, output="no target_host_ids", exit_code=1)
 
         results = []
         for host_id in request.target_host_ids:

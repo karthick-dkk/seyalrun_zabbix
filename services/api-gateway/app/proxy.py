@@ -50,6 +50,7 @@ SERVICE_ROUTES: dict[str, tuple[str, str]] = {
     "job-runs": ("automation_service_url", "automation-service"),
     "secret-management-jobs": ("automation_service_url", "automation-service"),
     "housekeeping": ("automation_service_url", "automation-service"),
+    "test-connection": ("automation_service_url", "automation-service"),
     "trigger-bindings": ("zabbix_integration_service_url", "zabbix-integration-service"),
     "triggers": ("zabbix_integration_service_url", "zabbix-integration-service"),
     "metrics": ("metrics_service_url", "metrics-service"),

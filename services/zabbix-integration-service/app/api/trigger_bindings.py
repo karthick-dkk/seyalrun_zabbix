@@ -320,3 +320,39 @@ async def search_live_problems(q: str = "", limit: int = 20, min_severity: int =
             "eventid": p["eventid"],
         })
     return out
+
+
+@router.get("/triggers/host-for-trigger")
+async def host_for_trigger(triggerid: str):
+    """Resolve the Zabbix host bound to a single trigger — used by the Trigger
+    Bindings admin page's 'Default host' Run path. Mirrors search_triggers()'s
+    trigger.get + selectHosts call, scoped to one triggerid."""
+    from app.config import get_settings
+    from app.api.webhook import _resolve_zabbix_creds
+    import httpx
+
+    settings = get_settings()
+    zbx_api_url, zbx_api_token = await _resolve_zabbix_creds(settings)
+    if not zbx_api_url or not zbx_api_token:
+        raise HTTPException(status_code=502, detail="Zabbix API URL/token not configured (Settings → Integration)")
+
+    api_url = zbx_api_url.rstrip("/") + "/api_jsonrpc.php"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {zbx_api_token}"}
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(api_url, headers=headers, json={
+            "jsonrpc": "2.0", "method": "trigger.get", "id": 1,
+            "params": {"triggerids": [triggerid], "output": ["triggerid"], "selectHosts": ["hostid", "name"]},
+        })
+        resp.raise_for_status()
+        data = resp.json()
+
+    if "error" in data:
+        raise HTTPException(status_code=502, detail=f"Zabbix API error: {data['error'].get('data', data['error'])}")
+
+    result = data.get("result", [])
+    hosts = result[0].get("hosts", []) if result else []
+    if not hosts:
+        raise HTTPException(status_code=404, detail="trigger has no associated host in Zabbix")
+    h = hosts[0]
+    return {"zabbix_hostid": h["hostid"], "zabbix_host_name": h.get("name", "")}

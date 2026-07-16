@@ -19,6 +19,7 @@ from .api.schedules import router as schedules_router
 from .api.job_runs import router as runs_router
 from .api.internal import router as internal_router
 from .api.housekeeping import router as housekeeping_router
+from .api.test_connection import router as test_connection_router
 
 _settings = get_settings()
 configure_logging("automation-service", _settings.log_level, _settings.log_path)
@@ -93,6 +94,7 @@ app.include_router(schedules_router, prefix="/api/v1")
 app.include_router(runs_router, prefix="/api/v1")
 app.include_router(internal_router, prefix="/api/v1")
 app.include_router(housekeeping_router, prefix="/api/v1")
+app.include_router(test_connection_router, prefix="/api/v1")
 
 
 @app.websocket("/ws/jobs/{run_id}/log")
