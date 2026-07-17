@@ -42,6 +42,61 @@
             "class": "Settings",
             "view": "seyalrun.embed",
             "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.users": {
+            "class": "AdminUsers",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.roles": {
+            "class": "AdminRoles",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.authorizations": {
+            "class": "AdminAuthorizations",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.credentials": {
+            "class": "AdminCredentials",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.zones": {
+            "class": "AdminZones",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.integration": {
+            "class": "AdminIntegration",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.health": {
+            "class": "AdminHealth",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.security": {
+            "class": "AdminSecurity",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.housekeeping": {
+            "class": "AdminHousekeeping",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.logbackend": {
+            "class": "AdminLogBackend",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
+        },
+        "seyalrun.admin.audit": {
+            "class": "AdminAudit",
+            "view": "seyalrun.embed",
+            "layout": "layout.htmlpage"
         }
     },
     "config": {}

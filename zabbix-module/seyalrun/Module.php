@@ -57,8 +57,40 @@ class Module extends CoreModule {
 		if (CWebUser::getType() == USER_TYPE_SUPER_ADMIN) {
 			$admin_menu = $main_menu->find(_('Administration'));
 			if ($admin_menu !== null && $admin_menu->getSubMenu() !== null) {
+				// Nested flyout (matching Administration > General's own nested
+				// submenu) instead of one flat link — the 13 SeyalRun admin sections
+				// combined into 5 groups: Access, Inventory, Automation, Platform,
+				// and Settings (kept on its own since it's a single page, not a
+				// group of pages).
 				$admin_menu->getSubMenu()->add(
-					(new CMenuItem(_('SeyalRun')))->setAction('seyalrun.settings')
+					(new CMenuItem(_('SeyalRun')))
+						->setSubMenu(new CMenu([
+							(new CMenuItem(_('Access')))
+								->setSubMenu(new CMenu([
+									(new CMenuItem(_('Users & Groups')))->setAction('seyalrun.admin.users'),
+									(new CMenuItem(_('Roles')))->setAction('seyalrun.admin.roles'),
+									(new CMenuItem(_('Authorizations')))->setAction('seyalrun.admin.authorizations'),
+								])),
+							(new CMenuItem(_('Inventory')))
+								->setSubMenu(new CMenu([
+									(new CMenuItem(_('Credentials')))->setAction('seyalrun.admin.credentials'),
+									(new CMenuItem(_('Zones')))->setAction('seyalrun.admin.zones'),
+								])),
+							(new CMenuItem(_('Automation')))
+								->setSubMenu(new CMenu([
+									(new CMenuItem(_('Integration')))->setAction('seyalrun.admin.integration'),
+									(new CMenuItem(_('Trigger Bindings')))->setAction('seyalrun.bindings'),
+								])),
+							(new CMenuItem(_('Platform')))
+								->setSubMenu(new CMenu([
+									(new CMenuItem(_('Health')))->setAction('seyalrun.admin.health'),
+									(new CMenuItem(_('Security')))->setAction('seyalrun.admin.security'),
+									(new CMenuItem(_('Housekeeping')))->setAction('seyalrun.admin.housekeeping'),
+									(new CMenuItem(_('Log Backend')))->setAction('seyalrun.admin.logbackend'),
+									(new CMenuItem(_('Audit Logs')))->setAction('seyalrun.admin.audit'),
+								])),
+							(new CMenuItem(_('Settings')))->setAction('seyalrun.settings'),
+						]))
 				);
 			}
 		}
