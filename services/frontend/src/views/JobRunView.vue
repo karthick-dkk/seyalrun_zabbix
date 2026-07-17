@@ -63,7 +63,7 @@ import api, { wsUrl } from '@/api/client'
 const route = useRoute()
 const router = useRouter()
 
-const runId = route.params.id as string
+const runId = computed(() => route.params.id as string)
 const run = ref<any>(null)
 const lines = ref<string[]>([])
 const autoScroll = ref(true)
@@ -119,13 +119,13 @@ const credentialLabel = computed(() => {
 })
 
 async function fetchRun() {
-  run.value = (await api.get(`/job-runs/${runId}`)).data
+  run.value = (await api.get(`/job-runs/${runId.value}`)).data
   lines.value = (run.value.output_lines || []) as string[]
 }
 
 function openWs() {
   if (ws) return
-  ws = new WebSocket(wsUrl(`jobs/${runId}/log`))
+  ws = new WebSocket(wsUrl(`jobs/${runId.value}/log`))
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data)
@@ -153,13 +153,28 @@ watch(lines, () => {
   if (autoScroll.value) scrollToBottom()
 })
 
-onMounted(async () => {
-  loadMaps()
+async function loadRun() {
+  ws?.close()
+  ws = null
+  run.value = null
+  lines.value = []
   await fetchRun()
   if (['pending', 'running'].includes(run.value?.status)) {
     lines.value = []   // the WS replays the full buffer — avoid double-printing
     openWs()
   }
+}
+
+onMounted(() => {
+  loadMaps()
+  loadRun()
+})
+
+// Vue Router reuses this component instance across /jobs/:id -> /jobs/:otherId
+// navigations (same route record), so onMounted only fires once — without this,
+// switching runs (e.g. after Re-run) would keep showing the old run's data.
+watch(() => route.params.id, (_new, old) => {
+  if (old !== undefined) loadRun()
 })
 
 onUnmounted(() => {
@@ -167,7 +182,7 @@ onUnmounted(() => {
 })
 
 async function cancelRun() {
-  await api.delete(`/job-runs/${runId}`)
+  await api.delete(`/job-runs/${runId.value}`)
   await fetchRun()
 }
 
@@ -175,11 +190,9 @@ const rerunning = ref(false)
 async function rerun() {
   rerunning.value = true
   try {
-    const { data } = await api.post(`/job-runs/${runId}/rerun`)
+    const { data } = await api.post(`/job-runs/${runId.value}/rerun`)
     if (data?.run_id) {
-      // Navigate to the new run and reload so the WS attaches to it.
       router.push(`/jobs/${data.run_id}`)
-      window.location.reload()
     }
   } catch (e: any) {
     alert(e?.response?.data?.detail || 'Re-run failed')
