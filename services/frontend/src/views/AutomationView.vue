@@ -907,16 +907,54 @@ function lintYaml(content: string): LintError[] {
   }
 }
 
+// Blanks out quoted-string interiors and comments (preserving line breaks and
+// overall length so line numbers stay accurate), using the same \-escape and
+// #-comment rules as the quote/bracket balance passes below. Used before
+// keyword tokenizing so words that only appear inside a string/comment never
+// get parsed as real shell syntax.
+function stripStringsAndComments(content: string): string {
+  let out = ''
+  let inSingle = false, inDouble = false
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i]
+    if (c === '\n') { out += '\n'; continue }
+    if (!inSingle && !inDouble && c === '#') {
+      while (i < content.length && content[i] !== '\n') { out += ' '; i++ }
+      i--
+      continue
+    }
+    if (inDouble) {
+      if (c === '\\') { out += '  '; i++; continue }
+      if (c === '"') { inDouble = false; out += ' '; continue }
+      out += ' '
+      continue
+    }
+    if (inSingle) {
+      if (c === "'") { inSingle = false; out += ' '; continue }
+      out += ' '
+      continue
+    }
+    if (c === '\\') { out += '  '; i++; continue }
+    if (c === '"') { inDouble = true; out += ' '; continue }
+    if (c === "'") { inSingle = true; out += ' '; continue }
+    out += c
+  }
+  return out
+}
+
 function lintBash(content: string): LintError[] {
   if (!content.trim()) return []
   const errors: LintError[] = []
 
   // Quote balance (spans lines; respects \-escaping and # comments outside quotes).
+  // The comment-skip loop stops ON the newline (not past it) so `continue`'s
+  // implicit i++ lands past it too — otherwise that newline never reaches the
+  // `c === '\n'` check below and every line-number report after a comment drifts.
   let inSingle = false, inDouble = false, line = 1, quoteLine = 0
   for (let i = 0; i < content.length; i++) {
     const c = content[i]
     if (c === '\n') { line++; continue }
-    if (!inSingle && !inDouble && c === '#') { while (i < content.length && content[i] !== '\n') i++; continue }
+    if (!inSingle && !inDouble && c === '#') { while (i < content.length && content[i] !== '\n') i++; i--; continue }
     if (inDouble) { if (c === '\\') { i++; continue } if (c === '"') inDouble = false; continue }
     if (inSingle) { if (c === "'") inSingle = false; continue }
     if (c === '\\') { i++; continue }
@@ -926,32 +964,44 @@ function lintBash(content: string): LintError[] {
   if (inDouble) errors.push({ line: quoteLine, message: 'Unclosed double quote (")' })
   if (inSingle) errors.push({ line: quoteLine, message: "Unclosed single quote (')" })
 
-  // Bracket balance: (), [], {} — skipped inside quotes/comments the same way.
+  // Quoted-string contents and comments are blanked out (preserving line breaks)
+  // once here and reused below, so a plain-English "for"/"if"/"case"/"until"
+  // inside an echo/printf message — e.g. echo "checking for host" — is never
+  // mistaken for real shell syntax, and so line numbers can be read straight
+  // off codeOnly's own line breaks without re-deriving them (avoiding the same
+  // comment/newline drift the quote-balance pass above has to guard against).
+  const codeOnly = stripStringsAndComments(content)
+  const codeLines = codeOnly.split('\n')
+
+  // Bracket balance: (), [], {}. Case-statement patterns (e.g. `"-f "*)`) use a
+  // bare `)` that closes the pattern, not a paired bracket — with no case/esac
+  // awareness this reads as an unmatched `)` on every single pattern arm, so a
+  // stray close while inside a case block is treated as a pattern terminator
+  // (silently accepted) rather than a real bracket error.
   const closerFor: Record<string, string> = { ')': '(', ']': '[', '}': '{' }
   const stack: { ch: string; line: number }[] = []
-  inSingle = false; inDouble = false; line = 1
-  for (let i = 0; i < content.length; i++) {
-    const c = content[i]
-    if (c === '\n') { line++; continue }
-    if (!inSingle && !inDouble && c === '#') { while (i < content.length && content[i] !== '\n') i++; continue }
-    if (inDouble) { if (c === '\\') { i++; continue } if (c === '"') inDouble = false; continue }
-    if (inSingle) { if (c === "'") inSingle = false; continue }
-    if (c === '\\') { i++; continue }
-    if (c === '"') { inDouble = true; continue }
-    if (c === "'") { inSingle = true; continue }
-    if (c === '(' || c === '[' || c === '{') stack.push({ ch: c, line })
-    else if (c === ')' || c === ']' || c === '}') {
-      const top = stack.pop()
-      if (!top || top.ch !== closerFor[c]) errors.push({ line, message: `Unexpected "${c}" — no matching "${closerFor[c]}"` })
+  let caseDepth = 0
+  codeLines.forEach((codePart, idx) => {
+    for (const tok of codePart.match(/\b[a-zA-Z_]+\b/g) || []) {
+      if (tok === 'case') caseDepth++
+      else if (tok === 'esac') caseDepth = Math.max(0, caseDepth - 1)
     }
-  }
+    for (const c of codePart) {
+      if (c === '(' || c === '[' || c === '{') stack.push({ ch: c, line: idx + 1 })
+      else if (c === ')' || c === ']' || c === '}') {
+        const top = stack[stack.length - 1]
+        if (top && top.ch === closerFor[c]) { stack.pop(); continue }
+        if (c === ')' && caseDepth > 0) continue // case-pattern terminator, not a bracket
+        errors.push({ line: idx + 1, message: `Unexpected "${c}" — no matching "${closerFor[c]}"` })
+      }
+    }
+  })
   for (const u of stack) errors.push({ line: u.line, message: `Unclosed "${u.ch}"` })
 
   // Block-keyword pairing: if/fi, for|while|until/done, case/esac.
   const closerKw: Record<string, string> = { if: 'fi', for: 'done', while: 'done', until: 'done', case: 'esac' }
   const kwStack: { kw: string; line: number }[] = []
-  content.split('\n').forEach((l, idx) => {
-    const codePart = l.split('#')[0]
+  codeLines.forEach((codePart, idx) => {
     const tokens = codePart.match(/\b[a-zA-Z_]+\b/g) || []
     for (const tok of tokens) {
       if (closerKw[tok]) kwStack.push({ kw: tok, line: idx + 1 })
