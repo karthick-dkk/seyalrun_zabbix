@@ -1,5 +1,6 @@
 <template>
   <AppShell>
+    <div class="page">
     <div class="admin-page">
       <nav class="admin-nav" :class="{ collapsed: navCollapsed }">
         <div class="admin-nav-header">
@@ -47,6 +48,7 @@
         <LogBackendAdmin v-else-if="section === 'log-backend'" />
         <AuditAdmin v-else-if="section === 'audit'" />
       </div>
+    </div>
     </div>
   </AppShell>
 </template>
