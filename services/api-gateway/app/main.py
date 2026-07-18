@@ -411,6 +411,14 @@ async def gateway(path: str, request: Request):
         # Zero-trust: deny anything the caller's roles don't explicitly grant.
         if not rbac.is_authorized(identity.get("roles") or [identity.get("role", "user")], request.method, path):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden: your role does not permit this action")
+        # Preserve the caller's true (pre-elevation) primary role — downstream_role()
+        # below can "vouch" a support/custom write up to X-User-Role: admin (see its
+        # own docstring), which is right for simple admin-gated CRUD guards but means
+        # a resource-scoped check (e.g. "does this support user actually manage this
+        # zone") can't tell a real admin from a vouched-for support write using
+        # X-User-Role alone. X-User-Real-Role carries the un-elevated role for the
+        # few downstream checks that need that distinction.
+        identity["real_role"] = rbac.primary_role(identity.get("roles") or [identity.get("role", "user")])
         # Forward the effective downstream role (see rbac.downstream_role for the rules).
         identity["role"] = rbac.downstream_role(
             identity.get("roles") or [identity.get("role", "user")], request.method, path.split("/", 1)[0])

@@ -39,6 +39,7 @@ const AREA_ROLES: Record<string, string[]> = {
   dashboard:                ['superadmin', 'admin', 'support'],
   hosts:                    ['superadmin', 'admin', 'support', 'user'],
   assets:                   ['superadmin', 'admin', 'support'],
+  zones:                    ['superadmin', 'admin', 'support'],
   terminal:                 ['superadmin', 'admin', 'support', 'user'],
   sessions:                 ['superadmin', 'admin', 'support', 'user'],
   recordings:               ['superadmin', 'admin', 'support', 'user'],
