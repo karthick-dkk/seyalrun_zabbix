@@ -205,12 +205,12 @@ onMounted(load)
 .lede { color: var(--text2); font-size: 12px; line-height: 1.6; margin: 0 0 16px; }
 .fp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .fp-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
-.fp-label { font-size: 12px; color: #8b949e; font-weight: 500; }
-.hint { color: #6e7681; font-weight: 400; }
-.fp-input { padding: 7px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 5px; color: #e6edf3; font-size: 13px; outline: none; }
+.fp-label { font-size: 12px; color: var(--text2); font-weight: 500; }
+.hint { color: var(--text2); font-weight: 400; }
+.fp-input { padding: 7px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 13px; outline: none; }
 .toggle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
 .save-msg { font-size: 12px; margin-top: 10px; }
-.save-msg.ok { color: #3fb950; }
-.save-msg.err { color: #f85149; }
-code { background: var(--surface2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.save-msg.ok { color: var(--accent); }
+.save-msg.err { color: var(--danger); }
+code { background: var(--bg3); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 </style>

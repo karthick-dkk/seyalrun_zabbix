@@ -693,38 +693,38 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
 .fp-form { display: flex; flex-direction: column; gap: 10px; }
 .fp-section-head {
   font-size: 10px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.08em; color: #484f58; margin-top: 6px; padding-bottom: 4px;
-  border-bottom: 1px solid #21262d;
+  letter-spacing: 0.08em; color: var(--text2); margin-top: 6px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
 }
 .fp-field { display: flex; flex-direction: column; gap: 5px; }
-.fp-label { font-size: 12px; color: #8b949e; font-weight: 500; }
+.fp-label { font-size: 12px; color: var(--text2); font-weight: 500; }
 .fp-input {
-  padding: 7px 10px; background: #161b22; border: 1px solid #30363d;
-  border-radius: 5px; color: #e6edf3; font-size: 13px; outline: none;
+  padding: 7px 10px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--text); font-size: 13px; outline: none;
   width: 100%; box-sizing: border-box;
 }
-.fp-input:focus { border-color: #58a6ff; }
+.fp-input:focus { border-color: var(--accent2); }
 .fp-input:disabled { opacity: 0.5; cursor: not-allowed; }
-.fp-error { font-size: 12px; color: #f85149; padding: 4px 0; }
-.fp-hint { font-size: 12px; color: #484f58; background: #161b22; border: 1px solid #21262d; border-radius: 5px; padding: 8px 10px; }
+.fp-error { font-size: 12px; color: var(--danger); padding: 4px 0; }
+.fp-hint { font-size: 12px; color: var(--text2); background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; }
 
-.fp-toggle-group { display: flex; background: #161b22; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.fp-toggle-group { display: flex; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .fp-toggle {
   flex: 1; padding: 5px 0; font-size: 12px; font-weight: 500;
-  background: transparent; border: none; color: #484f58; cursor: pointer;
+  background: transparent; border: none; color: var(--text2); cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
-.fp-toggle.active { background: #21262d; color: #e6edf3; }
-.fp-toggle:hover:not(.active) { color: #8b949e; }
+.fp-toggle.active { background: var(--bg2); color: var(--text); }
+.fp-toggle:hover:not(.active) { color: var(--text); }
 
 /* Inline members expand */
 .btn-pill-active {
-  background: rgba(88,166,255,0.15); border-color: #58a6ff; color: #58a6ff;
+  background: rgba(88,166,255,0.15); border-color: var(--accent2); color: var(--accent2);
 }
 .members-expand-row td { border-top: none !important; }
 .members-expand {
-  border-top: 1px solid #21262d;
-  background: #0d1117;
+  border-top: 1px solid var(--border);
+  background: var(--bg3);
   padding: 0;
 }
 .members-expand-header {
@@ -732,18 +732,18 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
   padding: 10px 14px 6px;
 }
 .members-expand-title {
-  font-size: 12px; font-weight: 600; color: #8b949e;
+  font-size: 12px; font-weight: 600; color: var(--text2);
   text-transform: uppercase; letter-spacing: 0.06em;
 }
 .members-search {
   display: block; width: 100%; box-sizing: border-box;
   margin: 0; padding: 7px 14px;
-  background: #161b22; border: none;
-  border-top: 1px solid #21262d; border-bottom: 1px solid #21262d;
-  color: #e6edf3; font-size: 13px; outline: none;
+  background: var(--bg3); border: none;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  color: var(--text); font-size: 13px; outline: none;
 }
-.members-search::placeholder { color: #484f58; }
-.members-search:focus { background: #1c2128; }
+.members-search::placeholder { color: var(--text2); }
+.members-search:focus { background: var(--bg2); }
 .members-list {
   max-height: 220px; overflow-y: auto;
   padding: 4px 0;
@@ -754,32 +754,32 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
   transition: background 0.1s;
   user-select: none;
 }
-.members-row:hover { background: #161b22; }
+.members-row:hover { background: var(--bg3); }
 .members-row.checked { background: rgba(88,166,255,0.06); }
 .members-checkbox {
   width: 15px; height: 15px; flex-shrink: 0;
-  accent-color: #58a6ff; cursor: pointer;
+  accent-color: var(--accent2); cursor: pointer;
 }
-.members-username { font-size: 13px; color: #e6edf3; font-weight: 500; }
-.members-display { font-size: 12px; color: #484f58; }
+.members-username { font-size: 13px; color: var(--text); font-weight: 500; }
+.members-display { font-size: 12px; color: var(--text2); }
 .members-expand-footer {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 10px 14px;
-  border-top: 1px solid #21262d;
+  border-top: 1px solid var(--border);
 }
 
-.fp-opt { font-size: 10px; font-weight: 400; color: #6e7681; }
+.fp-opt { font-size: 10px; font-weight: 400; color: var(--text2); }
 .role-check-list { display: flex; flex-direction: column; gap: 6px; }
 .role-check {
   display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px;
-  padding: 7px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg3);
   cursor: pointer; transition: border-color 0.12s, background 0.12s;
 }
-.role-check:hover { border-color: #58a6ff; }
+.role-check:hover { border-color: var(--accent2); }
 .role-check.checked { border-color: rgba(88,166,255,0.5); background: rgba(88,166,255,0.08); }
-.role-check input { accent-color: #58a6ff; width: 15px; height: 15px; }
-.role-check-name { font-size: 13px; font-weight: 600; color: #e6edf3; text-transform: capitalize; }
-.role-check-desc { font-size: 11px; color: #6e7681; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-check input { accent-color: var(--accent2); width: 15px; height: 15px; }
+.role-check-name { font-size: 13px; font-weight: 600; color: var(--text); text-transform: capitalize; }
+.role-check-desc { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Source badges (Zabbix vs native) ───────────────────────────────────── */
 .src-badge {
@@ -788,18 +788,18 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
   font-size: 9px; font-weight: 800; line-height: 1; flex-shrink: 0;
 }
 .src-badge--zbx { background: rgba(240,136,62,0.15); border: 1px solid rgba(240,136,62,0.5); color: #f0883e; }
-.src-badge--sr  { background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.35); color: #58a6ff; }
+.src-badge--sr  { background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.35); color: var(--accent2); }
 
 /* ── New-accounts-from-sync modal ───────────────────────────────────────── */
 .new-account-row {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 10px; border: 1px solid #21262d; border-radius: 6px; margin-bottom: 6px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px;
 }
-.new-account-user { font-size: 13px; font-weight: 600; color: #e6edf3; }
-.new-account-pw { font-size: 13px; color: #f0883e; background: #0d1117; padding: 2px 8px; border-radius: 4px; }
+.new-account-user { font-size: 13px; font-weight: 600; color: var(--text); }
+.new-account-pw { font-size: 13px; color: #f0883e; background: var(--bg3); padding: 2px 8px; border-radius: 4px; }
 
 /* ── Group roles expand (mirrors the members expand pattern) ───────────── */
-.roles-expand { border-top: 1px solid #21262d; background: #0d1117; padding: 12px 14px; }
-.roles-expand-title { font-size: 12px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+.roles-expand { border-top: 1px solid var(--border); background: var(--bg3); padding: 12px 14px; }
+.roles-expand-title { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
 .roles-expand-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 </style>

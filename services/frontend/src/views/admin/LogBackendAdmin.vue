@@ -140,24 +140,24 @@ onMounted(load)
 </script>
 
 <style scoped>
-.fp-section-head { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #484f58; margin-top: 14px; padding-bottom: 4px; border-bottom: 1px solid #21262d; }
+.fp-section-head { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text2); margin-top: 14px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
 .fp-opt { font-size: 10px; font-weight: 400; text-transform: none; }
 .fp-field { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
-.fp-label { font-size: 12px; color: #8b949e; font-weight: 500; }
-.fp-input { padding: 7px 10px; background: #161b22; border: 1px solid #30363d; border-radius: 5px; color: #e6edf3; font-size: 13px; outline: none; width: 100%; box-sizing: border-box; }
-.fp-input:focus { border-color: #58a6ff; }
-.fp-error { font-size: 12px; color: #f85149; padding: 8px 0; }
-.fp-toggle-group { display: flex; background: #161b22; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
-.fp-toggle { flex: 1; padding: 7px 0; font-size: 12px; font-weight: 500; background: transparent; border: none; color: #484f58; cursor: pointer; }
-.fp-toggle.active { background: #21262d; color: #e6edf3; }
+.fp-label { font-size: 12px; color: var(--text2); font-weight: 500; }
+.fp-input { padding: 7px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 13px; outline: none; width: 100%; box-sizing: border-box; }
+.fp-input:focus { border-color: var(--accent2); }
+.fp-error { font-size: 12px; color: var(--danger); padding: 8px 0; }
+.fp-toggle-group { display: flex; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.fp-toggle { flex: 1; padding: 7px 0; font-size: 12px; font-weight: 500; background: transparent; border: none; color: var(--text2); cursor: pointer; }
+.fp-toggle.active { background: var(--bg2); color: var(--text); }
 .lb-test { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
 .lb-test-row { display: flex; align-items: center; gap: 10px; }
 .lb-test-name { font-size: 12px; color: var(--text2); text-transform: capitalize; min-width: 110px; }
 .lb-route { width: 100%; border-collapse: collapse; margin-top: 8px; }
-.lb-route th { font-size: 11px; font-weight: 600; color: #8b949e; text-align: center; padding: 4px 6px; }
+.lb-route th { font-size: 11px; font-weight: 600; color: var(--text2); text-align: center; padding: 4px 6px; }
 .lb-route th:first-child { text-align: left; }
-.lb-route td { padding: 6px; border-top: 1px solid #21262d; text-align: center; }
-.lb-route td.lb-route-cat { text-align: left; font-size: 13px; color: #e6edf3; }
-.lb-route-hint { font-size: 11px; color: #8b949e; font-weight: 400; }
+.lb-route td { padding: 6px; border-top: 1px solid var(--border); text-align: center; }
+.lb-route td.lb-route-cat { text-align: left; font-size: 13px; color: var(--text); }
+.lb-route-hint { font-size: 11px; color: var(--text2); font-weight: 400; }
 .lb-route input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
 </style>

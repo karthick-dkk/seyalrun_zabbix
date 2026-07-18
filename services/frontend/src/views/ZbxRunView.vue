@@ -121,15 +121,17 @@ onBeforeUnmount(() => { if (poll) clearInterval(poll) })
 
 <style scoped>
 .zbx-run { max-width: 640px; margin: 24px auto; }
-.zr-row { display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px solid #21262d; }
-.zr-k { min-width: 110px; color: #8b949e; font-size: 13px; }
-.zr-v { color: #e6edf3; font-size: 13px; }
+.zr-row { display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.zr-k { min-width: 110px; color: var(--text2); font-size: 13px; }
+.zr-v { color: var(--text); font-size: 13px; }
 .mono { font-family: monospace; }
-.zr-label { font-size: 12px; color: #8b949e; margin: 16px 0 6px; }
+.zr-label { font-size: 12px; color: var(--text2); margin: 16px 0 6px; }
 .zr-toggle-group { display: flex; flex-wrap: wrap; gap: 6px; }
-.zr-toggle { padding: 7px 12px; font-size: 13px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #8b949e; cursor: pointer; }
-.zr-toggle.active { background: #21262d; color: #e6edf3; border-color: #58a6ff; }
-.zr-error { color: #f85149; font-size: 13px; margin-top: 12px; }
-.zr-empty { color: #8b949e; font-size: 13px; margin-top: 12px; }
+.zr-toggle { padding: 7px 12px; font-size: 13px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text2); cursor: pointer; }
+.zr-toggle.active { background: var(--bg2); color: var(--text); border-color: var(--accent2); }
+.zr-error { color: var(--danger); font-size: 13px; margin-top: 12px; }
+.zr-empty { color: var(--text2); font-size: 13px; margin-top: 12px; }
+/* Raw playbook/webhook output — kept intentionally dark like a terminal/log
+   console, matching JobRunView.vue's own output log regardless of site theme. */
 .zr-out { background: #0d1117; color: #c9d1d9; padding: 14px; border-radius: 8px; max-height: 420px; overflow: auto; font-size: 12px; white-space: pre-wrap; margin: 0; }
 </style>

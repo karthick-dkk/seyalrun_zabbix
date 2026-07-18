@@ -90,14 +90,14 @@ onMounted(load)
 
 <style scoped>
 .hk-cron {
-  width: 130px; padding: 5px 8px; background: #0d1117; border: 1px solid #30363d;
-  border-radius: 5px; color: #e6edf3; font-size: 12px; font-family: var(--font-mono, monospace); outline: none;
+  width: 130px; padding: 5px 8px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--text); font-size: 12px; font-family: var(--font-mono, monospace); outline: none;
 }
-.hk-cron:focus { border-color: #58a6ff; }
+.hk-cron:focus { border-color: var(--accent2); }
 .hk-switch { position: relative; display: inline-block; width: 36px; height: 20px; }
 .hk-switch input { opacity: 0; width: 0; height: 0; }
-.hk-slider { position: absolute; cursor: pointer; inset: 0; background: #30363d; border-radius: 20px; transition: 0.2s; }
-.hk-slider::before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: #8b949e; border-radius: 50%; transition: 0.2s; }
+.hk-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 20px; transition: 0.2s; }
+.hk-slider::before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: var(--text2); border-radius: 50%; transition: 0.2s; }
 .hk-switch input:checked + .hk-slider { background: rgba(34,197,94,0.4); }
 .hk-switch input:checked + .hk-slider::before { transform: translateX(16px); background: #4ade80; }
 </style>

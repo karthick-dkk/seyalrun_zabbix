@@ -329,24 +329,24 @@ watch(speed, () => {
   height: 100%;
   min-height: 0;
   padding: 16px 20px;
-  background: #0d1117;
-  color: #e6edf3;
+  background: var(--bg);
+  color: var(--text);
   box-sizing: border-box;
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .sp-header { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-shrink: 0; }
-.sp-back { font-size: 13px; color: #58a6ff; text-decoration: none; white-space: nowrap; }
+.sp-back { font-size: 13px; color: var(--accent2); text-decoration: none; white-space: nowrap; }
 .sp-back:hover { text-decoration: underline; }
 .sp-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sp-meta-host { font-weight: 600; font-size: 14px; }
-.sp-meta-sep { color: #30363d; }
-.sp-meta-user { color: #3fb950; font-size: 13px; }
-.sp-meta-dur  { font-family: monospace; font-size: 12px; color: #8b949e; }
-.sp-meta-date { font-size: 12px; color: #484f58; }
+.sp-meta-sep { color: var(--border); }
+.sp-meta-user { color: var(--accent); font-size: 13px; }
+.sp-meta-dur  { font-family: monospace; font-size: 12px; color: var(--text2); }
+.sp-meta-date { font-size: 12px; color: var(--text2); }
 
-.sp-loading { color: #8b949e; text-align: center; padding: 40px; }
-.sp-error   { color: #f85149; padding: 16px; background: #21262d; border-radius: 6px; }
+.sp-loading { color: var(--text2); text-align: center; padding: 40px; }
+.sp-error   { color: var(--danger); padding: 16px; background: var(--bg3); border-radius: 6px; }
 
 /* ── Two-panel layout ────────────────────────────────────────────────────── */
 .sp-layout {
@@ -356,6 +356,9 @@ watch(speed, () => {
   min-height: 0;
 }
 
+/* Player + sidebar below are the embedded terminal-replay widget — kept
+   intentionally dark like a video player's chrome, matching the live terminal
+   (TermSession.vue) regardless of site theme. */
 /* ── Player (left) ───────────────────────────────────────────────────────── */
 .sp-player {
   flex: 1;
