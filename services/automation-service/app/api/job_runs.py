@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app._params import template_code_params
 from app.database import get_session, SessionLocal
-from app.deps import require_service_token, get_user_id, get_user_role
+from app.deps import require_service_token, get_user_id, get_user_role, get_user_real_role
 from app.models import ZAJobRun, ZAJobTemplate
 from app.config import get_settings
 from app.runner import get_redis
@@ -151,7 +151,7 @@ async def rerun(
 async def approve_run(
     run_id: str,
     request: Request,
-    role: str = Depends(get_user_role),
+    role: str = Depends(get_user_real_role),
     session: AsyncSession = Depends(get_session),
 ):
     run = await session.get(ZAJobRun, run_id)
@@ -200,7 +200,7 @@ class RejectPayload(BaseModel):
 async def reject_run(
     run_id: str,
     payload: RejectPayload,
-    role: str = Depends(get_user_role),
+    role: str = Depends(get_user_real_role),
     session: AsyncSession = Depends(get_session),
 ):
     run = await session.get(ZAJobRun, run_id)
