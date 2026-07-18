@@ -36,6 +36,14 @@ class TemplateCreate(BaseModel):
     allowed_param_keys: list[str] = []
     quick_action: bool = False
     enabled: bool = True
+    timeout_seconds: int | None = None
+    retry_count: int = 0
+    retry_delay_seconds: int = 30
+    max_parallel: int = 1
+    forks: int | None = None
+    requires_approval: bool = False
+    approver_role: str | None = None
+    chain_steps: list[dict] = []
 
 
 class TemplateUpdate(BaseModel):
@@ -50,8 +58,17 @@ class TemplateUpdate(BaseModel):
     subject_credential_id: str | None = None
     quick_action: bool | None = None
     enabled: bool | None = None
+    survey_schema: dict | None = None
     default_params: dict | None = None
     allowed_param_keys: list[str] | None = None
+    timeout_seconds: int | None = None
+    retry_count: int | None = None
+    retry_delay_seconds: int | None = None
+    max_parallel: int | None = None
+    forks: int | None = None
+    requires_approval: bool | None = None
+    approver_role: str | None = None
+    chain_steps: list[dict] | None = None
 
 
 class PlaybookImportRequest(BaseModel):
@@ -93,6 +110,11 @@ class RunPayload(BaseModel):
     credential_mode: str = "default"
     credential_id: str | None = None
     host_credentials: dict[str, str] = {}
+    # Ansible --check/--diff, requested per-run — every caller can always ask for the
+    # safer path regardless of the template's own allowed_param_keys, so this is a
+    # dedicated top-level field rather than something routed through params/the survey
+    # allowlist. No effect on bash_script (no Ansible-equivalent exists).
+    dry_run: bool = False
 
 
 @router.get("/job-templates")
@@ -230,6 +252,49 @@ async def run_template(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     params = {**tmpl.default_params, **caller_params}
 
+    # Runtime Variables (survey_schema.fields): validate each declared field's supplied
+    # value against its own rule — a string field's regex, or a dropdown's fixed option
+    # list — the same "never silently proceed on bad/missing input" discipline already
+    # applied to host/credential resolution elsewhere in this service. The UI enforces
+    # these too, but a direct API caller must be held to the same bar.
+    survey_fields = [f for f in (tmpl.survey_schema or {}).get("fields") or [] if isinstance(f, dict) and f.get("name")]
+    if survey_fields:
+        import re as _re
+
+        for f in survey_fields:
+            name = f["name"]
+            val = str(params.get(name, f.get("default", "")))
+            # Every declared Runtime Variable is mandatory — a blank value (no caller
+            # override and no template default) must hard-fail here rather than let the
+            # job run with an empty/missing input silently baked into $1, $2, ... or an
+            # extra-var.
+            if not val.strip():
+                raise HTTPException(status_code=400, detail=f"'{f.get('prompt') or name}' is required")
+            if f.get("type") == "dropdown":
+                options = [str(o) for o in (f.get("options") or [])]
+                if options and val not in options:
+                    raise HTTPException(status_code=400, detail=f"'{f.get('prompt') or name}' must be one of: {', '.join(options)}")
+            else:
+                pattern = f.get("validation")
+                if pattern:
+                    try:
+                        matches = _re.fullmatch(pattern, val) is not None
+                    except _re.error:
+                        matches = True  # malformed admin-authored regex — don't hard-fail the run over it
+                    if not matches:
+                        raise HTTPException(status_code=400, detail=f"'{f.get('prompt') or name}' does not match the required pattern")
+            params[name] = val
+
+        # bash_script has no named-variable mechanism of its own — positional $1 $2 ...
+        # only. Build that positional string here, in the fields' declared order, so the
+        # executor's existing script_args -> shlex pipeline (bash_script.py) needs no
+        # changes: shlex.quote makes each value exactly one token regardless of spaces,
+        # and the executor's own shlex.split/shlex.quote round-trip that safely.
+        if tmpl.action_type == "bash_script":
+            import shlex as _shlex
+
+            params["script_args"] = " ".join(_shlex.quote(str(params.get(f["name"], ""))) for f in survey_fields)
+
     # Account operations act on a "subject" account (the user created/rotated/disabled/
     # removed on each host). Fall back to the template's pinned subject credential when the
     # run didn't specify one, so the template editor's "Subject Credential" actually applies.
@@ -253,6 +318,7 @@ async def run_template(
         if tmpl.action_type in ("ansible_playbook", "bash_script"):
             eff_credential_id = tmpl.credential_id
 
+    run_id = str(uuid.uuid4())
     stored_params = {
         **params,
         # _-prefixed keys are stored for re-run/history and are stripped from ansible
@@ -262,19 +328,31 @@ async def run_template(
         "_credential_mode": mode,
         "_credential_id": eff_credential_id,
         "_host_credentials": host_creds,
+        "_dry_run": payload.dry_run,
+        "_max_parallel": tmpl.max_parallel,
+        "_forks": tmpl.forks,
+        # Only meaningful for action_type == "chain" (ChainExecutor) — the step
+        # list to run in order, and this run's own id so each step's child
+        # ZAJobRun can record it as parent_run_id.
+        "_chain_steps": tmpl.chain_steps if tmpl.action_type == "chain" else None,
+        "_run_id": run_id,
     }
-
-    run_id = str(uuid.uuid4())
     run = ZAJobRun(
         id=run_id,
         job_template_id=template_id,
         triggered_by=f"user:{user_id}",
-        status="pending",
+        # A template with requires_approval gets a real ZAJobRun row (visible in
+        # history/notifications) but no dispatch — the run only starts once an
+        # approver-role user calls POST /job-runs/{id}/approve (see job_runs.py).
+        status="pending_approval" if tmpl.requires_approval else "pending",
         params=stored_params,
         output_lines=[],
     )
     session.add(run)
     await session.commit()
+
+    if tmpl.requires_approval:
+        return {"run_id": run_id, "status": "pending_approval"}
 
     executors = getattr(request.app.state, "executors", {})
     executor = executors.get(tmpl.action_type)
@@ -291,7 +369,10 @@ async def run_template(
         params={**stored_params, **template_code_params(tmpl)},
         triggered_by=f"user:{user_id}",
     )
-    asyncio.create_task(_runner.execute(run_id, executor, req))
+    asyncio.create_task(_runner.execute(
+        run_id, executor, req, timeout_seconds=tmpl.timeout_seconds, template_name=tmpl.name,
+        retry_count=tmpl.retry_count, retry_delay_seconds=tmpl.retry_delay_seconds,
+    ))
     return {"run_id": run_id}
 
 
@@ -306,6 +387,10 @@ def _out(t: ZAJobTemplate) -> dict:
         "survey_schema": t.survey_schema, "default_params": t.default_params,
         "allowed_param_keys": list(t.allowed_param_keys or []),
         "quick_action": t.quick_action, "enabled": t.enabled, "created_by": t.created_by,
+        "timeout_seconds": t.timeout_seconds, "retry_count": t.retry_count,
+        "retry_delay_seconds": t.retry_delay_seconds, "max_parallel": t.max_parallel,
+        "forks": t.forks, "requires_approval": t.requires_approval,
+        "approver_role": t.approver_role, "chain_steps": list(t.chain_steps or []),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }

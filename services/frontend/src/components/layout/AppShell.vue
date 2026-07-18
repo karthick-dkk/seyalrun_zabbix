@@ -3,8 +3,10 @@
     <!-- Sidebar — hidden when embedded inside Zabbix (its native menu provides navigation) -->
     <nav v-if="!isEmbedded" class="sidebar" :class="{ collapsed }">
       <div class="sidebar-logo">
-        <span class="logo-icon" v-html="ICONS.logo" />
-        <span class="logo-text">SeyalRun</span>
+        <router-link to="/" class="sidebar-logo-link" title="Go to Dashboard">
+          <span class="logo-icon" v-html="ICONS.logo" />
+          <span class="logo-text">SeyalRun</span>
+        </router-link>
         <button class="sidebar-collapse-btn" @click="collapsed = !collapsed" :title="collapsed ? 'Expand' : 'Collapse'">
           <span v-html="collapsed ? ICONS.chevronRight : ICONS.chevronLeft" />
         </button>
@@ -13,21 +15,35 @@
         <router-link v-if="auth.can('dashboard')" to="/"         class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.dashboard" /><span class="nav-label">Dashboard</span></router-link>
         <router-link v-if="auth.can('hosts')"     to="/hosts"    class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.hosts" /><span class="nav-label">Hosts</span></router-link>
         <router-link v-if="auth.can('assets')"    to="/assets"   class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.assets" /><span class="nav-label">Assets</span></router-link>
+        <router-link v-if="auth.can('zones')"     to="/zones"    class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.globe" /><span class="nav-label">Zones</span></router-link>
         <router-link v-if="auth.can('sessions')"  to="/sessions" class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.sessions" /><span class="nav-label">Sessions</span></router-link>
         <router-link v-if="auth.can('automation')" to="/automation" class="nav-item" active-class="active"><span class="nav-icon" v-html="ICONS.automation" /><span class="nav-label">Automation</span></router-link>
+        <!-- One nav, not two: Admin is an inline expandable tree (grouped into Access /
+             Inventory / Automation / Platform, matching AdminView's own grouping) instead of
+             a link that opens a second, separate nav panel next to this one. Collapsed by
+             default; auto-expands when already on an admin page so the active item isn't
+             hidden behind a click. -->
         <template v-if="auth.canAnyAdmin()">
-          <div class="nav-section-header"><span class="nav-label">Admin</span></div>
-          <router-link v-if="auth.can('admin.users')"              to="/admin/users"              class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.users" /><span class="nav-label">Users &amp; Groups</span></router-link>
-          <router-link v-if="auth.can('admin.roles')"              to="/admin/roles"              class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.shield" /><span class="nav-label">Roles</span></router-link>
-          <router-link v-if="auth.can('admin.authorizations')"     to="/admin/authorizations"     class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.lock" /><span class="nav-label">Authorizations</span></router-link>
-          <router-link v-if="auth.can('admin.credentials')"        to="/admin/credentials"        class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.key" /><span class="nav-label">Credentials</span></router-link>
-          <router-link v-if="auth.can('admin.zones')"              to="/admin/zones"              class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.globe" /><span class="nav-label">Zones</span></router-link>
-          <router-link v-if="auth.can('admin.security')"           to="/admin/security"           class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.shield" /><span class="nav-label">Security</span></router-link>
-          <router-link v-if="auth.can('admin.integration')"        to="/admin/integration"        class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.globe" /><span class="nav-label">Integration</span></router-link>
-          <router-link v-if="auth.can('admin.health')"             to="/admin/health"             class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.clipboard" /><span class="nav-label">Health</span></router-link>
-          <router-link v-if="auth.can('admin.housekeeping')"       to="/admin/housekeeping"       class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.gear" /><span class="nav-label">Housekeeping</span></router-link>
-          <router-link v-if="auth.can('admin.log-backend')"        to="/admin/log-backend"        class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.clipboard" /><span class="nav-label">Log Backend</span></router-link>
-          <router-link v-if="auth.can('admin.audit')"              to="/admin/audit"              class="nav-item nav-sub" active-class="active"><span class="nav-icon" v-html="ICONS.clipboard" /><span class="nav-label">Audit Logs</span></router-link>
+          <button type="button" class="nav-item nav-admin-toggle" :class="{ active: onAdminRoute }" @click="adminExpanded = !adminExpanded">
+            <span class="nav-icon" v-html="ICONS.gear" /><span class="nav-label">Admin</span>
+            <span class="nav-chevron" :class="{ expanded: adminExpanded }" v-html="ICONS.chevronRight" />
+          </button>
+          <div v-if="adminExpanded && !collapsed" class="nav-admin-groups">
+            <template v-for="g in ADMIN_GROUPS" :key="g.label">
+              <div v-if="g.tabs.some(t => auth.can(t.area))" class="nav-admin-group">
+                <span class="nav-group-label">{{ g.label }}</span>
+                <router-link
+                  v-for="t in g.tabs.filter(t => auth.can(t.area))"
+                  :key="t.to"
+                  :to="t.to"
+                  class="nav-item nav-sub"
+                  active-class="active"
+                >
+                  <span class="nav-icon" v-html="t.icon" /><span class="nav-label">{{ t.label }}</span>
+                </router-link>
+              </div>
+            </template>
+          </div>
         </template>
       </div>
       <div class="sidebar-user">
@@ -51,12 +67,52 @@
         <span class="topbar-title">{{ $route.meta.title || 'SeyalRun' }}</span>
         <router-link
           v-if="zabbixTokenWarning"
-          to="/admin/integration"
+          to="/settings/integration"
           class="topbar-link"
           style="color:var(--warn);border-color:rgba(210,153,34,0.4);background:rgba(210,153,34,0.08)"
           title="Zabbix API token is missing or invalid — host sync and Zabbix reachability checks won't work until it's fixed"
         >
           ⚠ Zabbix API token issue
+        </router-link>
+        <button type="button" class="topbar-icon-btn" @click="toggleTheme" :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+          <span v-html="theme === 'dark' ? ICONS.sun : ICONS.moon" style="display:flex;align-items:center;" />
+        </button>
+        <div class="notif-wrap">
+          <button type="button" class="topbar-icon-btn" @click="toggleNotifDropdown" title="Notifications" style="position:relative">
+            <span v-html="ICONS.bell" style="display:flex;align-items:center;" />
+            <span v-if="notifStore.unreadCount" class="notif-badge">{{ notifStore.unreadCount > 9 ? '9+' : notifStore.unreadCount }}</span>
+          </button>
+          <div v-if="showNotifDropdown" class="notif-backdrop" @click="showNotifDropdown = false" />
+          <div v-if="showNotifDropdown" class="notif-dropdown">
+            <div class="notif-dropdown-header">
+              <span>Notifications</span>
+              <button type="button" class="notif-mark-all" @click="notifStore.markAllRead()" :disabled="!notifStore.unreadCount">Mark all read</button>
+            </div>
+            <div v-if="!notifStore.items.length" class="notif-empty">No notifications yet</div>
+            <div v-for="n in notifStore.items" :key="n.id" class="notif-item" :class="{ unread: !n.read }" @click="openNotification(n)">
+              <span class="notif-dot" :class="'sev-' + n.severity" />
+              <div class="notif-item-body">
+                <div class="notif-item-title">{{ n.title }}</div>
+                <div v-if="n.message" class="notif-item-message">{{ n.message }}</div>
+                <div class="notif-item-time">{{ timeAgo(n.created_at) }}</div>
+              </div>
+              <button type="button" class="notif-dismiss" title="Dismiss" @click.stop="notifStore.dismiss(n.id)">×</button>
+            </div>
+            <div class="notif-dropdown-footer">
+              <!-- Critical (job failures) can never be muted — only info/medium. -->
+              <label class="notif-mute-toggle">
+                <input type="checkbox" :checked="notifStore.mutedSeverities.includes('info')" @change="toggleMute('info')" />
+                Mute info
+              </label>
+              <label class="notif-mute-toggle">
+                <input type="checkbox" :checked="notifStore.mutedSeverities.includes('medium')" @change="toggleMute('medium')" />
+                Mute medium
+              </label>
+            </div>
+          </div>
+        </div>
+        <router-link v-if="canAnySettings" to="/settings" class="topbar-icon-btn" active-class="active" title="Settings">
+          <span v-html="ICONS.gear" style="display:flex;align-items:center;" />
         </router-link>
         <button class="topbar-btn" @click="openTerminal" title="SSH Terminal">
           <span v-html="ICONS.terminal" style="display:flex;align-items:center;" />
@@ -77,13 +133,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
 import api, { terminalUrl } from '@/api/client'
+import { theme, toggleTheme } from '@/theme'
 
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
+const notifStore = useNotificationsStore()
 
 // ── SF Symbol-style SVG icon set (24×24, stroke-based, Apple thin-line aesthetic) ──
 function _svg(body: string): string {
@@ -109,7 +169,38 @@ const ICONS = {
   arrowUpRight: _svg('<path d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>'),
   chevronRight: _svg('<path d="M8.25 4.5l7.5 7.5-7.5 7.5"/>'),
   chevronLeft:  _svg('<path d="M15.75 19.5L8.25 12l7.5-7.5"/>'),
+  bolt:        _svg('<path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/>'),
+  sun:         _svg('<path d="M12 3v2.25m0 13.5V21m9-9h-2.25M5.25 12H3m15.364-6.364-1.591 1.591M7.227 16.773l-1.591 1.591m0-12.728 1.591 1.591m9.546 9.546 1.591 1.591M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z"/>'),
+  moon:        _svg('<path d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/>'),
 }
+
+// Access/Inventory/Trigger Bindings stay under Admin's own expandable tree. Integration,
+// SeyalRun Settings, and the whole former "Platform" group (Health/Security/Housekeeping/
+// Log Backend/Audit Logs) moved to the dedicated Settings page (topbar gear icon) —
+// AdminView.vue's own nav (used only inside the Zabbix iframe) is untouched and still
+// shows all 13 sections there, unchanged.
+const ADMIN_GROUPS = [
+  { label: 'Access', tabs: [
+    { area: 'admin.users', to: '/admin/users', label: 'Users & Groups', icon: ICONS.users },
+    { area: 'admin.roles', to: '/admin/roles', label: 'Roles', icon: ICONS.shield },
+    { area: 'admin.authorizations', to: '/admin/authorizations', label: 'Authorizations', icon: ICONS.lock },
+  ] },
+  { label: 'Inventory', tabs: [
+    { area: 'admin.credentials', to: '/admin/credentials', label: 'Credentials', icon: ICONS.key },
+    { area: 'admin.zones', to: '/admin/zones', label: 'Zones', icon: ICONS.globe },
+  ] },
+  { label: 'Automation', tabs: [
+    { area: 'admin.zabbix-integration', to: '/admin/trigger-bindings', label: 'Trigger Bindings', icon: ICONS.bolt },
+  ] },
+]
+
+const SETTINGS_AREAS = ['admin.integration', 'admin.platform', 'admin.health', 'admin.security', 'admin.housekeeping', 'admin.log-backend', 'admin.audit']
+const canAnySettings = computed(() => SETTINGS_AREAS.some((a) => auth.can(a)))
+
+const onAdminRoute = computed(() => route.path.startsWith('/admin'))
+// Manually expandable, not always-open — but start expanded when a direct link/refresh
+// already landed on an admin page, so the active item isn't hidden behind an extra click.
+const adminExpanded = ref(onAdminRoute.value)
 
 // When loaded inside the Zabbix "Manage SeyalRun" iframe, Zabbix's own
 // sidebar already provides navigation — rendering ours on top causes
@@ -134,6 +225,39 @@ onMounted(async () => {
     zabbixTokenWarning.value = !!data?.configured && (!data?.token_configured || data?.token_valid === false)
   } catch { /* keep fallback */ }
 })
+
+// Opened once here (not per-page) so notifications keep arriving while browsing —
+// see stores/notifications.ts connect()'s own doc comment.
+onMounted(() => {
+  notifStore.load().catch(() => {})
+  notifStore.loadPreferences().catch(() => {})
+  notifStore.connect()
+})
+onUnmounted(() => notifStore.disconnect())
+
+const showNotifDropdown = ref(false)
+function toggleNotifDropdown() {
+  showNotifDropdown.value = !showNotifDropdown.value
+  if (showNotifDropdown.value) notifStore.load().catch(() => {})
+}
+function openNotification(n: { id: string; read: boolean; source_type: string; source_id: string | null }) {
+  if (!n.read) notifStore.markRead(n.id)
+  showNotifDropdown.value = false
+  if (n.source_type === 'job_run' && n.source_id) router.push(`/jobs/${n.source_id}`)
+}
+function toggleMute(severity: string) {
+  const cur = notifStore.mutedSeverities
+  const next = cur.includes(severity) ? cur.filter((s) => s !== severity) : [...cur, severity]
+  notifStore.setPreferences(next)
+}
+function timeAgo(iso: string | null): string {
+  if (!iso) return ''
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (secs < 60) return 'just now'
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
+  return `${Math.floor(secs / 86400)}d ago`
+}
 
 async function doLogout() {
   await auth.logout()
@@ -193,4 +317,46 @@ function openTerminal() {
   color: var(--accent2);
 }
 .topbar-btn :deep(svg) { width: 15px; height: 15px; }
+
+/* ── Notifications bell + dropdown ─────────────────────────────────────────── */
+.notif-wrap { position: relative; }
+.notif-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 3px;
+  border-radius: 999px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700;
+  line-height: 16px; text-align: center; box-shadow: 0 0 0 2px var(--bg2);
+}
+.notif-backdrop { position: fixed; inset: 0; z-index: 40; }
+.notif-dropdown {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 41; width: 340px; max-height: 420px;
+  overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+}
+.notif-dropdown-header {
+  display: flex; align-items: center; justify-content: space-between; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; color: var(--text);
+  position: sticky; top: 0; background: var(--bg2);
+}
+.notif-mark-all { background: none; border: none; color: var(--accent2); font-size: 11.5px; cursor: pointer; }
+.notif-mark-all:disabled { color: var(--text2); cursor: default; }
+.notif-empty { padding: 24px 14px; text-align: center; color: var(--text2); font-size: 12.5px; }
+.notif-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.12s; }
+.notif-item:last-child { border-bottom: none; }
+.notif-item:hover { background: var(--bg3); }
+.notif-item.unread { background: rgba(59,130,246,0.05); }
+.notif-dot { width: 8px; height: 8px; border-radius: 999px; margin-top: 5px; flex-shrink: 0; }
+.notif-dot.sev-info { background: var(--accent2); }
+.notif-dot.sev-medium { background: var(--warn); }
+.notif-dot.sev-critical { background: var(--danger); }
+.notif-item-body { flex: 1; min-width: 0; }
+.notif-item-title { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.notif-item-message { font-size: 11.5px; color: var(--text2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-item-time { font-size: 10.5px; color: var(--text2); margin-top: 3px; }
+.notif-dismiss { background: none; border: none; color: var(--text2); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; flex-shrink: 0; }
+.notif-dismiss:hover { color: var(--danger); }
+.notif-dropdown-footer {
+  display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--border);
+  position: sticky; bottom: 0; background: var(--bg2);
+}
+.notif-mute-toggle { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); cursor: pointer; }
+.notif-mute-toggle input { accent-color: #58a6ff; }
 </style>

@@ -26,8 +26,10 @@ from libs.rbaccore import (
 
 logger = logging.getLogger(__name__)
 
-# segment that every authenticated caller may use (login/mfa/self-service)
-_ALWAYS = {"auth"}
+# segments every authenticated caller may use (login/mfa/self-service) — notifications
+# are inherently per-caller (own inbox/preferences only, enforced by X-User-Id scoping
+# in automation-service, not a role capability), so every role gets them like auth.
+_ALWAYS = {"auth", "notifications"}
 
 # ── Live cache: role name -> permission document (populated from identity) ────
 _ROLE_PERMS: dict[str, dict] = {}
@@ -82,6 +84,7 @@ _NAV_SEGMENTS: dict[str, tuple[str, str]] = {
     "dashboard": ("GET", "metrics"),
     "hosts": ("GET", "hosts"),
     "assets": ("GET", "assets"),
+    "zones": ("GET", "zones"),
     "sessions": ("GET", "ssh"),
     "terminal": ("GET", "ssh"),
     "recordings": ("GET", "recordings"),

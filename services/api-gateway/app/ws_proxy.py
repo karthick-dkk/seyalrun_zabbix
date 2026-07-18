@@ -22,7 +22,7 @@ from .config import get_settings
 from .security import AuthError, resolve_identity_from_token
 
 # WS path segment → equivalent REST segment for the RBAC matrix check.
-_WS_RBAC_SEGMENT = {"ssh": "ssh", "jobs": "job-runs"}
+_WS_RBAC_SEGMENT = {"ssh": "ssh", "jobs": "job-runs", "notifications": "notifications"}
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ router = APIRouter()
 WS_SERVICE_ROUTES: dict[str, tuple[str, str]] = {
     "ssh": ("terminal_service_ws_url", "terminal-service"),
     "jobs": ("automation_service_ws_url", "automation-service"),
+    "notifications": ("automation_service_ws_url", "automation-service"),
 }
 
 

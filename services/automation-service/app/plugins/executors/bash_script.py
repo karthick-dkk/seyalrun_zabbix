@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+import signal
 import stat
 import tempfile
 from typing import Callable
@@ -12,6 +13,16 @@ from typing import Callable
 from libs.pluginbase import ActionExecutor, RunRequest, RunResult
 
 from app._ssh_exec import run_command as _ssh_run
+
+
+def _kill_process_group(pid: int, sig: int) -> None:
+    """See ansible_playbook.py's identical helper — a script can fork its own
+    children (backgrounded commands, pipelines); killing only the tracked bash
+    PID would orphan them the same way an unguarded ansible-playbook kill does."""
+    try:
+        os.killpg(os.getpgid(pid), sig)
+    except ProcessLookupError:
+        pass
 
 
 def _quoted_args(raw: str) -> str:
@@ -49,10 +60,18 @@ class BashScriptExecutor(ActionExecutor):
         if not request.target_host_ids:
             return RunResult(ok=False, output="no target_host_ids", exit_code=1)
 
-        results = []
-        for host_id in request.target_host_ids:
-            ok, out = await self._run_on_host(host_id, script, request, publish_line)
-            results.append(ok)
+        # _max_parallel is internal-only (see job_templates.py run_template's
+        # stored_params) — 1 preserves the exact sequential behavior every template
+        # had before this field existed, so an unset/old template is unaffected.
+        max_parallel = max(1, int(request.params.get("_max_parallel") or 1))
+        sem = asyncio.Semaphore(max_parallel)
+
+        async def _bounded(host_id: str) -> bool:
+            async with sem:
+                ok, _out = await self._run_on_host(host_id, script, request, publish_line)
+                return ok
+
+        results = await asyncio.gather(*(_bounded(h) for h in request.target_host_ids))
 
         all_ok = all(results)
         return RunResult(ok=all_ok, output="", exit_code=0 if all_ok else 1)
@@ -62,17 +81,31 @@ class BashScriptExecutor(ActionExecutor):
             f.write(script)
             tmp = f.name
         os.chmod(tmp, stat.S_IRWXU)
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "bash", tmp, *shlex.split(script_args or ""),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
             )
             async for line in proc.stdout:
                 text = line.decode().rstrip()
                 await publish_line(text)
             await proc.wait()
             return RunResult(ok=(proc.returncode == 0), output="", exit_code=proc.returncode)
+        except asyncio.CancelledError:
+            # See ansible_playbook.py's identical guard — runner.py's timeout cancels
+            # us mid-read/mid-wait; without an explicit kill this bash process (and
+            # anything it forked) keeps running unmonitored after the job is already
+            # marked "error".
+            if proc is not None and proc.returncode is None:
+                _kill_process_group(proc.pid, signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    _kill_process_group(proc.pid, signal.SIGKILL)
+            raise
         finally:
             os.unlink(tmp)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import stat
 import tempfile
 import textwrap
@@ -13,6 +14,16 @@ from typing import Callable
 import yaml
 
 from libs.pluginbase import ActionExecutor, RunRequest, RunResult
+
+
+def _kill_process_group(pid: int, sig: int) -> None:
+    """Signal the whole process group (see start_new_session=True below) rather
+    than just the tracked PID — ProcessLookupError means the group is already
+    gone (process exited between our check and the signal), safe to ignore."""
+    try:
+        os.killpg(os.getpgid(pid), sig)
+    except ProcessLookupError:
+        pass
 
 
 def build_inventory(hosts: list, tmpdir: str) -> dict:
@@ -137,7 +148,9 @@ class AnsiblePlaybookExecutor(ActionExecutor):
 
         extra_vars = {k: v for k, v in request.params.items()
                       if k not in ("script_content", "run_local") and not k.startswith("_")}
-        return await run_ansible_playbook(hosts, playbook_content, publish_line, extra_vars)
+        dry_run = bool(request.params.get("_dry_run"))
+        forks = request.params.get("_forks")
+        return await run_ansible_playbook(hosts, playbook_content, publish_line, extra_vars, dry_run=dry_run, forks=forks)
 
     async def run(self, request: RunRequest) -> RunResult:
         return await self.execute(request, lambda _: asyncio.sleep(0))
@@ -148,6 +161,8 @@ async def run_ansible_playbook(
     playbook_content: str,
     publish_line: Callable,
     extra_vars: dict | None = None,
+    dry_run: bool = False,
+    forks: int | None = None,
 ) -> RunResult:
     """Shared subprocess dispatch — writes a YAML-safe inventory + the given
     playbook into a tempdir and runs `ansible-playbook` against it, streaming
@@ -177,8 +192,19 @@ async def run_ansible_playbook(
         ]
         if extra_vars:
             cmd += ["--extra-vars", json.dumps(extra_vars)]
+        if dry_run:
+            # --check simulates without applying changes; --diff shows what would
+            # change for modules that support it. Requested as a per-run safety
+            # option (RunPayload.dry_run), never a template default, so any caller
+            # can always ask for the safer path regardless of the template's own
+            # allowed_param_keys.
+            cmd += ["--check", "--diff"]
+        if forks:
+            # Ansible's own default fork count is 5 — null/unset leaves that
+            # untouched; only an explicit template value overrides it.
+            cmd += ["--forks", str(forks)]
 
-        await publish_line(f"[ansible] running playbook against {len(hosts)} host(s)...")
+        await publish_line(f"[ansible] running playbook against {len(hosts)} host(s)...{' (DRY RUN — no changes will be applied)' if dry_run else ''}")
         # PYTHONUNBUFFERED=1 + ANSIBLE_STDOUT_CALLBACK=default forces line-buffered
         # stdout so each output line is published to Redis immediately rather than
         # being held until the subprocess exits.
@@ -202,9 +228,31 @@ async def run_ansible_playbook(
             stderr=asyncio.subprocess.STDOUT,
             cwd=tmpdir,
             env=proc_env,
+            # New session/process group so ansible-playbook's own forked children
+            # (ssh, sshpass, and especially the ControlPersist mux connection it
+            # deliberately keeps alive for reuse) share one killable group. Without
+            # this, terminate()/kill() below only reach the ansible-playbook PID
+            # itself — confirmed live: SIGTERM'd ansible-playbook exits cleanly in
+            # ~20ms, but its orphaned ssh children (and the remote command they're
+            # still attached to) keep running well past the job's own timeout.
+            start_new_session=True,
         )
-        async for line in proc.stdout:
-            await publish_line(line.decode().rstrip())
-        await proc.wait()
+        try:
+            async for line in proc.stdout:
+                await publish_line(line.decode().rstrip())
+            await proc.wait()
+        except asyncio.CancelledError:
+            # runner.py's asyncio.wait_for(...) timeout cancels us right here (mid
+            # stdout-read or mid-wait) — without an explicit kill, ansible-playbook
+            # (and everything it forked over SSH) keeps running unmonitored after the
+            # job is already marked "error" in the DB. SIGTERM the whole process
+            # group first (lets it clean up), SIGKILL the group if it's still alive
+            # a moment later.
+            _kill_process_group(proc.pid, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                _kill_process_group(proc.pid, signal.SIGKILL)
+            raise
         ok = proc.returncode == 0
         return RunResult(ok=ok, output="", exit_code=proc.returncode)

@@ -12,11 +12,13 @@ import redis.asyncio as aioredis
 
 from .config import get_settings
 from .database import SessionLocal
-from .models import ZAJobRun
+from .models import ZAJobRun, ZANotification
 
 logger = logging.getLogger(__name__)
 
 _redis: aioredis.Redis | None = None
+
+_SEVERITY_BY_STATUS = {"success": "info", "failed": "critical", "error": "critical"}
 
 
 def get_redis() -> aioredis.Redis:
@@ -27,10 +29,59 @@ def get_redis() -> aioredis.Redis:
     return _redis
 
 
-async def execute(run_id: str, executor, request, settings=None) -> None:
-    """Run a job: update DB status, stream output lines to Redis, finalize."""
+async def _notify_completion(run_id: str, template_name: str, triggered_by: str | None, final_status: str) -> None:
+    # Only "user:<id>"-triggered runs target a specific inbox; anything else
+    # (schedule/zabbix/chain-step, or no notify-worthy status) broadcasts to everyone.
+    user_id = None
+    if triggered_by and triggered_by.startswith("user:"):
+        user_id = triggered_by[len("user:"):]
+    severity = _SEVERITY_BY_STATUS.get(final_status)
+    if severity is None:
+        return
+    notif = ZANotification(
+        user_id=user_id,
+        severity=severity,
+        title=f"{template_name or 'Job'}: {final_status}",
+        source_type="job_run",
+        source_id=run_id,
+    )
+    async with SessionLocal() as session:
+        session.add(notif)
+        await session.commit()
+        await session.refresh(notif)
+    channel = f"notifications:{user_id}" if user_id else "notifications:broadcast"
+    payload = json.dumps({
+        "id": notif.id, "severity": severity, "title": notif.title, "message": notif.message,
+        "source_type": "job_run", "source_id": run_id,
+        "created_at": notif.created_at.isoformat() if notif.created_at else None,
+    })
+    await get_redis().publish(channel, payload)
+
+
+async def execute(
+    run_id: str, executor, request, settings=None, timeout_seconds: int | None = None,
+    template_name: str = "", retry_count: int = 0, retry_delay_seconds: int = 30,
+) -> None:
+    """Run a job: update DB status, stream output lines to Redis, finalize.
+
+    timeout_seconds is the template's own (optional) override — it can only tighten
+    the effective timeout, never exceed settings.job_exec_timeout_seconds, so a
+    misconfigured template can't evade the platform-wide ceiling.
+
+    retry_count re-attempts a failed/error/timed-out run up to retry_count additional
+    times (0 = today's exact behavior, one attempt). A user Cancel is never retried —
+    cancel_run() sets status directly and this function doesn't see it, so no special
+    case is needed here; a genuine task cancellation (asyncio.CancelledError, distinct
+    from our own asyncio.TimeoutError) propagates straight out of the loop below rather
+    than being caught by the generic `except Exception`, since CancelledError has
+    inherited from BaseException (not Exception) since Python 3.8.
+    """
     if settings is None:
         settings = get_settings()
+
+    effective_timeout = settings.job_exec_timeout_seconds
+    if timeout_seconds:
+        effective_timeout = min(timeout_seconds, settings.job_exec_timeout_seconds)
 
     redis = get_redis()
     channel = f"job:{run_id}:log"
@@ -54,24 +105,38 @@ async def execute(run_id: str, executor, request, settings=None) -> None:
         run.status = "running"
         await session.commit()
 
+    total_attempts = max(1, retry_count + 1)
     exit_code = None
     final_status = "error"
-    try:
-        result = await asyncio.wait_for(
-            executor.execute(request, publish_line),
-            timeout=settings.job_exec_timeout_seconds,
+    for attempt in range(1, total_attempts + 1):
+        if attempt > 1:
+            await publish_line(f"=== attempt {attempt}/{total_attempts} ===")
+        exit_code = None
+        final_status = "error"
+        try:
+            result = await asyncio.wait_for(
+                executor.execute(request, publish_line),
+                timeout=effective_timeout,
+            )
+            exit_code = result.exit_code if result.exit_code is not None else (0 if result.ok else 1)
+            final_status = "success" if result.ok else "failed"
+            if result.output:
+                await publish_line(result.output)
+        except asyncio.TimeoutError:
+            final_status = "error"
+            await publish_line(f"[error] job timed out after {effective_timeout}s")
+        except Exception as exc:
+            final_status = "error"
+            await publish_line(f"[error] {exc}")
+            logger.exception("job run %s failed (attempt %s/%s)", run_id, attempt, total_attempts)
+
+        if final_status == "success" or attempt == total_attempts:
+            break
+        await publish_line(
+            f"[retry] attempt {attempt}/{total_attempts} failed ({final_status}), "
+            f"retrying in {retry_delay_seconds}s..."
         )
-        exit_code = result.exit_code if result.exit_code is not None else (0 if result.ok else 1)
-        final_status = "success" if result.ok else "failed"
-        if result.output:
-            await publish_line(result.output)
-    except asyncio.TimeoutError:
-        final_status = "error"
-        await publish_line(f"[error] job timed out after {settings.job_exec_timeout_seconds}s")
-    except Exception as exc:
-        final_status = "error"
-        await publish_line(f"[error] {exc}")
-        logger.exception("job run %s failed", run_id)
+        await asyncio.sleep(retry_delay_seconds)
 
     async with SessionLocal() as session:
         run = await session.get(ZAJobRun, run_id)
@@ -83,3 +148,5 @@ async def execute(run_id: str, executor, request, settings=None) -> None:
 
     done_msg = json.dumps({"type": "done", "status": final_status, "exit_code": exit_code})
     await redis.publish(channel, done_msg)
+
+    await _notify_completion(run_id, template_name, request.triggered_by, final_status)

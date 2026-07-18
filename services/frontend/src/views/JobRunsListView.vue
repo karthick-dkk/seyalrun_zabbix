@@ -111,8 +111,9 @@ function credentialLabel(run: any): string {
 
 function statusClass(s: string) {
   if (s === 'success') return 'badge badge-green'
-  if (s === 'failed' || s === 'error') return 'badge badge-red'
+  if (s === 'failed' || s === 'error' || s === 'rejected') return 'badge badge-red'
   if (s === 'running') return 'badge badge-blue'
+  if (s === 'pending_approval') return 'badge badge-yellow'
   return 'badge badge-gray'
 }
 
