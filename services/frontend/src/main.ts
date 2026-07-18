@@ -1,3 +1,5 @@
+import './theme' // applies the persisted dark/light choice before first paint — import first
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'

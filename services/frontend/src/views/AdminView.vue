@@ -2,7 +2,11 @@
   <AppShell>
     <div class="page">
     <div class="admin-page">
-      <nav class="admin-nav" :class="{ collapsed: navCollapsed }">
+      <!-- Only needed inside the Zabbix iframe, where AppShell hides its own sidebar
+           entirely and this is the sole nav. Standalone now has one unified nav (an
+           expandable Admin tree in AppShell's own sidebar) — rendering this one too
+           would just be the same 13 destinations shown twice again. -->
+      <nav v-if="isEmbedded" class="admin-nav" :class="{ collapsed: navCollapsed }">
         <div class="admin-nav-header">
           <div v-if="!navCollapsed" class="admin-nav-heading">
             <div class="admin-nav-title">Admin</div>
@@ -140,48 +144,3 @@ const activeLabel = computed(() => {
 })
 </script>
 
-<style scoped>
-/* .page (style.css) is padding: 20px 24px inside a flex:1 column that
-   already fills the available height (topbar is flex-shrink:0, .page is
-   flex:1) — negative-margin out to its edges so the nav goes flush, then
-   min-height:100% to match whatever height .page actually resolves to,
-   rather than guessing a pixel value that'd be wrong when the topbar is
-   hidden (embedded-in-Zabbix mode). */
-.admin-page { display: flex; align-items: flex-start; gap: 0; margin: -20px -24px; min-height: 100%; }
-
-.admin-nav {
-  width: 240px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--border);
-  padding: 16px 0 20px; align-self: stretch; transition: width 0.16s ease;
-}
-.admin-nav-header { padding: 0 20px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.admin-nav-title { font-size: 18px; font-weight: 700; white-space: nowrap; }
-.admin-nav-subtitle { font-size: 11.5px; color: var(--text2); margin-top: 3px; line-height: 1.5; }
-.admin-nav-collapse { flex-shrink: 0; background: none; border: none; color: var(--text2); cursor: pointer; padding: 4px; border-radius: 4px; display: flex; margin-top: 2px; }
-.admin-nav-collapse:hover { background: var(--bg3); color: var(--text); }
-.admin-nav-collapse :deep(svg) { width: 15px; height: 15px; }
-.admin-nav-group { margin-bottom: 4px; }
-.admin-nav-group-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text2); font-weight: 700; padding: 14px 20px 6px; white-space: nowrap; }
-.admin-nav-item {
-  display: flex; align-items: center; gap: 11px; padding: 8px 20px; margin: 0 8px; border-radius: var(--radius);
-  font-size: 13.5px; color: var(--text2); text-decoration: none; position: relative; white-space: nowrap;
-}
-.admin-nav-item-icon :deep(svg) { width: 17px; height: 17px; flex-shrink: 0; display: block; }
-.admin-nav-item:hover { background: var(--bg3); color: var(--text); }
-.admin-nav-item.active { background: var(--bg3); color: var(--text); font-weight: 600; }
-.admin-nav-item.active .admin-nav-item-icon { color: var(--accent2); }
-.admin-nav-item.active::before { content: ""; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--accent2); }
-
-/* Collapsed: icon-only rail, same technique as AppShell.vue's own
-   .sidebar.collapsed — width shrinks, labels disappear, title attribute
-   (native browser tooltip) becomes the only affordance for which item is
-   which. Auto-starts collapsed inside the Zabbix iframe (see isEmbedded
-   above); toggling is manual everywhere. */
-.admin-nav.collapsed { width: 64px; }
-.admin-nav.collapsed .admin-nav-header { justify-content: center; padding: 0 0 14px; }
-.admin-nav.collapsed .admin-nav-item { justify-content: center; padding: 9px 0 9px 6px; margin: 0 10px; gap: 0; }
-.admin-nav.collapsed .admin-nav-group { margin-bottom: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-.admin-nav.collapsed .admin-nav-group:first-child { border-top: none; padding-top: 0; }
-
-.admin-content { flex: 1; min-width: 0; padding: 24px 32px; }
-.content-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
-</style>

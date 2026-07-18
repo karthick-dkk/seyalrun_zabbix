@@ -14,17 +14,38 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
 
+/* Light theme — every component already reads colors through these variables (never
+   hardcoded backgrounds/text), so overriding them here is enough to re-theme the whole
+   app. Accent/danger/warn are darkened a step from their dark-theme values for AA
+   contrast on a white background; a few intentionally-always-dark surfaces (the
+   terminal-style Job Run output log, the code editor gutter) are left as-is on
+   purpose, the same way most editors keep a dark console regardless of app theme.
+   The toggle in AppShell.vue sets data-theme on <html>; applied before Vue mounts
+   (see main.ts) so there's no flash of the wrong theme on load. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg2: #f5f6f8;
+  --bg3: #eceef2;
+  --border: #dde1e8;
+  --text: #14171f;
+  --text2: #667085;
+  --accent: #16a34a;
+  --accent2: #2563eb;
+  --danger: #dc2626;
+  --warn: #b45309;
+}
+
 html, body { margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; transition: background-color 0.15s ease, color 0.15s ease; }
 
 .app-shell { display: flex; height: 100vh; overflow: hidden; }
 .sidebar { width: 232px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; transition: width 0.18s ease; }
 .sidebar.collapsed { width: 64px; }
 .sidebar.collapsed .sidebar-logo span.logo-text,
 .sidebar.collapsed .nav-item span.nav-label,
-.sidebar.collapsed .nav-section-header,
 .sidebar.collapsed .sidebar-user .user-meta { display: none; }
-.sidebar-logo { padding: 18px 16px; font-weight: 700; font-size: 17px; color: var(--accent2); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+.sidebar-logo { padding: 18px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; }
+.sidebar-logo-link { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; color: var(--accent2); text-decoration: none; min-width: 0; }
 .sidebar-logo .logo-icon { color: var(--accent2); font-size: 20px; }
 .sidebar-collapse-btn { margin-left: auto; background: none; border: none; color: var(--text2); cursor: pointer; font-size: 14px; padding: 4px; border-radius: 4px; }
 .sidebar-collapse-btn:hover { background: var(--bg3); color: var(--text); }
@@ -35,10 +56,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 .nav-item:hover { background: var(--bg3); color: var(--text); }
 .nav-item.active { background: rgba(59,130,246,0.14); color: var(--accent2); font-weight: 600; }
 .nav-section { padding: 16px 16px 4px; font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
-.nav-section-header { padding: 16px 12px 4px; font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; white-space: nowrap; }
-.sidebar.collapsed .nav-section-header { display: none; }
-.nav-sub { padding-left: 24px; font-size: 12.5px; }
-.sidebar.collapsed .nav-sub { padding-left: 12px; }
+.nav-admin-toggle { width: 100%; background: none; border: none; font: inherit; }
+.nav-chevron { width: 14px; height: 14px; margin-left: auto; flex-shrink: 0; display: flex; color: var(--text2); transition: transform 0.15s; }
+.nav-chevron svg { width: 14px; height: 14px; display: block; }
+.nav-chevron.expanded { transform: rotate(90deg); }
+.sidebar.collapsed .nav-chevron,
+.sidebar.collapsed .nav-admin-groups { display: none; }
+.nav-admin-groups { margin-bottom: 2px; }
+.nav-group-label { display: block; padding: 10px 12px 4px 34px; font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.7px; font-weight: 700; white-space: nowrap; }
+.nav-sub { padding-left: 34px; font-size: 12.5px; }
 .sidebar-user { padding: 14px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
 .sidebar-user .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent2); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
 .sidebar-user .user-meta { min-width: 0; flex: 1; }
@@ -57,6 +83,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 .topbar-link:hover { color: var(--text); border-color: var(--text2); }
 .topbar-link.accent { color: var(--accent2); border-color: rgba(59,130,246,0.35); background: rgba(59,130,246,0.08); }
 .topbar-link.accent:hover { background: rgba(59,130,246,0.16); }
+.topbar-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); cursor: pointer; text-decoration: none; transition: all 0.15s; flex-shrink: 0; }
+.topbar-icon-btn svg { width: 17px; height: 17px; display: block; }
+.topbar-icon-btn:hover { color: var(--text); border-color: var(--text2); }
+.topbar-icon-btn.active { color: var(--accent2); border-color: rgba(59,130,246,0.35); background: rgba(59,130,246,0.08); }
 /* overscroll-behavior-y: contain stops scroll-chaining once this container
    hits its own scroll limit. Without it, scrolling to the bottom of a tall
    page (e.g. an expanded Authorizations edit row) bubbles into whatever's
@@ -162,4 +192,48 @@ select.input { cursor: pointer; }
 .reach-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; vertical-align: middle; margin-right: 6px; }
 .reach-up { background: var(--accent); box-shadow: 0 0 4px rgba(34,197,94,0.5); }
 .reach-down { background: var(--danger); }
+
+/* Nav + content shell shared by AdminView.vue and SettingsView.vue — a left-nav rail
+   (grouped, icon + label) next to a content panel. .page (above) is padding: 20px 24px
+   inside a flex:1 column that already fills the available height (topbar is
+   flex-shrink:0, .page is flex:1) — negative-margin out to its edges so the nav goes
+   flush, then min-height:100% to match whatever height .page actually resolves to,
+   rather than guessing a pixel value that'd be wrong when the topbar is hidden
+   (embedded-in-Zabbix mode). */
+.admin-page { display: flex; align-items: flex-start; gap: 0; margin: -20px -24px; min-height: 100%; }
+
+.admin-nav {
+  width: 240px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--border);
+  padding: 16px 0 20px; align-self: stretch; transition: width 0.16s ease;
+}
+.admin-nav-header { padding: 0 20px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.admin-nav-title { font-size: 18px; font-weight: 700; white-space: nowrap; }
+.admin-nav-subtitle { font-size: 11.5px; color: var(--text2); margin-top: 3px; line-height: 1.5; }
+.admin-nav-collapse { flex-shrink: 0; background: none; border: none; color: var(--text2); cursor: pointer; padding: 4px; border-radius: 4px; display: flex; margin-top: 2px; }
+.admin-nav-collapse:hover { background: var(--bg3); color: var(--text); }
+.admin-nav-collapse svg { width: 15px; height: 15px; }
+.admin-nav-group { margin-bottom: 4px; }
+.admin-nav-group-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text2); font-weight: 700; padding: 14px 20px 6px; white-space: nowrap; }
+.admin-nav-item {
+  display: flex; align-items: center; gap: 11px; padding: 8px 20px; margin: 0 8px; border-radius: var(--radius);
+  font-size: 13.5px; color: var(--text2); text-decoration: none; position: relative; white-space: nowrap;
+}
+.admin-nav-item-icon svg { width: 17px; height: 17px; flex-shrink: 0; display: block; }
+.admin-nav-item:hover { background: var(--bg3); color: var(--text); }
+.admin-nav-item.active { background: var(--bg3); color: var(--text); font-weight: 600; }
+.admin-nav-item.active .admin-nav-item-icon { color: var(--accent2); }
+.admin-nav-item.active::before { content: ""; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--accent2); }
+
+/* Collapsed: icon-only rail, same technique as AppShell.vue's own .sidebar.collapsed —
+   width shrinks, labels disappear, title attribute (native browser tooltip) becomes the
+   only affordance for which item is which. AdminView auto-starts collapsed inside the
+   Zabbix iframe; SettingsView never renders there so never uses this state. */
+.admin-nav.collapsed { width: 64px; }
+.admin-nav.collapsed .admin-nav-header { justify-content: center; padding: 0 0 14px; }
+.admin-nav.collapsed .admin-nav-item { justify-content: center; padding: 9px 0 9px 6px; margin: 0 10px; gap: 0; }
+.admin-nav.collapsed .admin-nav-group { margin-bottom: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.admin-nav.collapsed .admin-nav-group:first-child { border-top: none; padding-top: 0; }
+
+.admin-content { flex: 1; min-width: 0; padding: 24px 32px; }
+.content-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
 .reach-unknown { background: var(--border); }
