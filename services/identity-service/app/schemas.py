@@ -71,6 +71,9 @@ class TokenResponse(BaseModel):
     # Group-enforced: no mfa_method yet, but a group requires one — distinct from
     # mfa_required (which means "already enrolled, verify a code this session").
     mfa_setup_required: bool = False
+    # Informational only (not gateway-enforced) — a group wants the first-login
+    # setup wizard shown and this user hasn't been through it yet.
+    needs_setup_wizard: bool = False
 
 
 class UserCreate(BaseModel):

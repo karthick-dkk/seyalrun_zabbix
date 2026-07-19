@@ -163,7 +163,7 @@ async def _consume_otp(user_id: str, code: str, purpose: str) -> None:
 async def _mint_session(
     session: AsyncSession, user: ZAUser, roles: list[str], primary: str, settings,
     *, kiosk_host_id: str | None = None, pwc: bool = False,
-) -> tuple[str, bool, bool]:
+) -> tuple[str, bool, bool, bool]:
     """The ONE place every login path (password, SSO, post-password-change
     re-mint) goes through to turn a resolved identity into a session — so the
     mfa_pending claim can never be forgotten on one path while being enforced
@@ -175,14 +175,17 @@ async def _mint_session(
     they must complete enrollment (not just verify a code) before anything
     else. Group enforcement is checked only when the user isn't already on
     the mfa_pending path (verifying an existing enrollment already satisfies
-    any group's requirement)."""
+    any group's requirement).
+
+    needs_setup_wizard is purely informational (not gateway-enforced — the
+    wizard is a friendly first-login nudge, not a security gate): true when
+    the effective group policy wants it and the user hasn't been through it."""
     from ..grouppolicy import effective_group_policies
 
     mfa_pending = bool(user.mfa_method)
-    mfa_setup_required = False
-    if not mfa_pending:
-        policies = await effective_group_policies(session, user.id)
-        mfa_setup_required = bool(policies.get("mfa_enforced"))
+    policies = await effective_group_policies(session, user.id)
+    mfa_setup_required = bool(policies.get("mfa_enforced")) and not mfa_pending
+    needs_setup_wizard = bool(policies.get("setup_wizard")) and not user.setup_completed
 
     token = await create_session(
         redis_client,
@@ -195,7 +198,7 @@ async def _mint_session(
     )
     if mfa_pending and user.mfa_method == "email":
         await _issue_otp(user, session, "login")
-    return token, mfa_pending, mfa_setup_required
+    return token, mfa_pending, mfa_setup_required, needs_setup_wizard
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -234,7 +237,7 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
 
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     kiosk_host_id = await _resolve_kiosk_host(payload.kiosk_target, settings)
-    token, mfa_pending, mfa_setup_required = await _mint_session(
+    token, mfa_pending, mfa_setup_required, needs_setup_wizard = await _mint_session(
         session, user, roles, primary, settings,
         kiosk_host_id=kiosk_host_id, pwc=user.must_change_password,
     )
@@ -251,7 +254,7 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
     return TokenResponse(
         access_token=token, user=await _user_out(session, user, kiosk_host_id),
         mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
-        mfa_setup_required=mfa_setup_required,
+        mfa_setup_required=mfa_setup_required, needs_setup_wizard=needs_setup_wizard,
     )
 
 
@@ -286,7 +289,7 @@ async def change_password(
     # A forced-password-change user may ALSO have MFA enabled/enforced — re-mint through
     # the same helper as /login so the mfa_pending/mfa_setup_required claim isn't dropped
     # on this path.
-    token, mfa_pending, mfa_setup_required = await _mint_session(session, user, roles, primary, settings, kiosk_host_id=kiosk_host_id)
+    token, mfa_pending, mfa_setup_required, needs_setup_wizard = await _mint_session(session, user, roles, primary, settings, kiosk_host_id=kiosk_host_id)
 
     await log_action(
         session, user_id=user.id, username=user.username, action="password_change",
@@ -296,7 +299,7 @@ async def change_password(
     return TokenResponse(
         access_token=token, user=await _user_out(session, user, kiosk_host_id),
         mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
-        mfa_setup_required=mfa_setup_required,
+        mfa_setup_required=mfa_setup_required, needs_setup_wizard=needs_setup_wizard,
     )
 
 
@@ -353,7 +356,7 @@ async def sso_exchange(payload: SSOExchangeRequest, session: AsyncSession = Depe
     # session), so a user who enabled MFA specifically to require a second factor
     # was still fully bypassable through this endpoint. Mirrors the pwc handling
     # immediately above, which already went through _mint_session for this reason.
-    token, mfa_pending, mfa_setup_required = await _mint_session(session, user, roles, primary, settings, pwc=user.must_change_password)
+    token, mfa_pending, mfa_setup_required, needs_setup_wizard = await _mint_session(session, user, roles, primary, settings, pwc=user.must_change_password)
 
     await log_action(
         session, user_id=user.id, username=user.username,
@@ -363,7 +366,7 @@ async def sso_exchange(payload: SSOExchangeRequest, session: AsyncSession = Depe
     return TokenResponse(
         access_token=token, user=await _user_out(session, user),
         mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
-        mfa_setup_required=mfa_setup_required,
+        mfa_setup_required=mfa_setup_required, needs_setup_wizard=needs_setup_wizard,
     )
 
 
@@ -474,6 +477,8 @@ async def mfa_enable(
     await log_action(session, user_id=user.id, username=user.username, action="mfa.enable",
                      resource_type="user", details={"method": user.mfa_method})
 
+    from ..grouppolicy import effective_group_policies
+
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     token = await create_session(
@@ -481,7 +486,11 @@ async def mfa_enable(
         user_id=user.id, username=user.username, role=primary, roles=roles,
         idle_minutes=settings.session_idle_minutes,
     )
-    return TokenResponse(access_token=token, user=await _user_out(session, user))
+    # Enrollment may have just satisfied a group's mfa_enforced requirement — check
+    # whether the SAME group (or another) also wants the setup wizard shown next.
+    policies = await effective_group_policies(session, user.id)
+    needs_setup_wizard = bool(policies.get("setup_wizard")) and not user.setup_completed
+    return TokenResponse(access_token=token, user=await _user_out(session, user), needs_setup_wizard=needs_setup_wizard)
 
 
 @router.post("/mfa/disable/request-code")
@@ -552,6 +561,8 @@ async def mfa_verify_login(
     else:
         await _consume_otp(user.id, payload.code, "login")
 
+    from ..grouppolicy import effective_group_policies
+
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     token = await create_session(
@@ -563,7 +574,9 @@ async def mfa_verify_login(
         session, user_id=user.id, username=user.username, action="mfa.verify_login",
         resource_type="session", ip_address=request.client.host if request.client else "",
     )
-    return TokenResponse(access_token=token, user=await _user_out(session, user))
+    policies = await effective_group_policies(session, user.id)
+    needs_setup_wizard = bool(policies.get("setup_wizard")) and not user.setup_completed
+    return TokenResponse(access_token=token, user=await _user_out(session, user), needs_setup_wizard=needs_setup_wizard)
 
 
 @router.post("/mfa/resend")
@@ -642,6 +655,21 @@ async def mfa_verify(
         settings.jwt_secret, algorithm=settings.jwt_algorithm,
     )
     return {"valid": True, "reveal_token": reveal_token}
+
+
+@router.post("/setup/complete")
+async def setup_complete(
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """Dismisses the first-login setup wizard for good — self-only, no extra
+    auth beyond being authenticated (the session reaching here is already a
+    normal, fully-authorized one: mfa_setup_required is always cleared before
+    the frontend ever shows the wizard's summary step)."""
+    user = await _require_user(session, x_user_id)
+    user.setup_completed = True
+    await session.commit()
+    return {"setup_completed": True}
 
 
 # ── Link token — short-lived deep-link for Zabbix integration ────────────────

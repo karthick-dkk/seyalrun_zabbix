@@ -178,9 +178,12 @@ export const useAuthStore = defineStore('auth', {
     async login(username: string, password: string, kioskTarget?: string) {
       const { data } = await api.post('/auth/login', { username, password, kiosk_target: kioskTarget })
       this._applyToken(data.access_token, data.user)
-      if (data.mfa_required) return { mfaRequired: true, mfaMethod: data.mfa_method as string }
-      await this.loadNav()
-      return { mfaRequired: false }
+      const gate = {
+        mfaRequired: !!data.mfa_required, mfaMethod: data.mfa_method as string,
+        mfaSetupRequired: !!data.mfa_setup_required, needsSetupWizard: !!data.needs_setup_wizard,
+      }
+      if (!gate.mfaRequired && !gate.mfaSetupRequired) await this.loadNav()
+      return gate
     },
 
     // Forced first-login rotation: the gateway 403s everything except this
@@ -194,16 +197,21 @@ export const useAuthStore = defineStore('auth', {
         kiosk_target: kioskTarget,
       })
       this._applyToken(data.access_token, data.user)
-      if (data.mfa_required) return { mfaRequired: true, mfaMethod: data.mfa_method as string }
-      await this.loadNav()
-      return { mfaRequired: false }
+      const gate = {
+        mfaRequired: !!data.mfa_required, mfaMethod: data.mfa_method as string,
+        mfaSetupRequired: !!data.mfa_setup_required, needsSetupWizard: !!data.needs_setup_wizard,
+      }
+      if (!gate.mfaRequired && !gate.mfaSetupRequired) await this.loadNav()
+      return gate
     },
 
     // Completes the login-time MFA gate — mints a clean, fully-usable session.
+    // Still may need the setup wizard next (independent of the MFA gate).
     async verifyMfaLogin(code: string) {
       const { data } = await api.post('/auth/mfa/verify-login', { code })
       this._applyToken(data.access_token, data.user)
       await this.loadNav()
+      return { needsSetupWizard: !!data.needs_setup_wizard }
     },
 
     async resendMfaCode() {
@@ -212,9 +220,17 @@ export const useAuthStore = defineStore('auth', {
 
     // /auth/mfa/enable now always re-mints a clean session (see auth.py) — matters
     // for the group-enforced enrollment path, harmless for voluntary self-service
-    // enrollment. Callers (SecurityView.vue) apply the returned token via this.
-    applyMfaEnableResult(accessToken: string, user: SessionUser) {
+    // enrollment. Callers (SecurityView.vue, LoginView.vue) apply the returned
+    // token via this, and check the wizard flag (relevant when enrollment was
+    // itself the last gate — the forced-enrollment path in LoginView.vue).
+    async applyMfaEnableResult(accessToken: string, user: SessionUser, needsSetupWizard: boolean) {
       this._applyToken(accessToken, user)
+      await this.loadNav()
+      return { needsSetupWizard: !!needsSetupWizard }
+    },
+
+    async completeSetupWizard() {
+      await api.post('/auth/setup/complete')
     },
 
     // Zabbix SSO is a parallel credential path, not exempt from a user's own MFA
@@ -222,9 +238,12 @@ export const useAuthStore = defineStore('auth', {
     async exchangeSSO(ssoCode: string) {
       const { data } = await api.post('/auth/sso-exchange', { sso_code: ssoCode })
       this._applyToken(data.access_token, data.user)
-      if (data.mfa_required) return { mfaRequired: true, mfaMethod: data.mfa_method as string }
-      await this.loadNav()
-      return { mfaRequired: false }
+      const gate = {
+        mfaRequired: !!data.mfa_required, mfaMethod: data.mfa_method as string,
+        mfaSetupRequired: !!data.mfa_setup_required, needsSetupWizard: !!data.needs_setup_wizard,
+      }
+      if (!gate.mfaRequired && !gate.mfaSetupRequired) await this.loadNav()
+      return gate
     },
 
     // Instant server-side revocation, not just forgetting the token

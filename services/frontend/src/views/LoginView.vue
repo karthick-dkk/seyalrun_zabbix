@@ -30,6 +30,58 @@
               {{ resending ? 'Sending…' : 'Resend code' }}
             </button>
           </template>
+          <template v-else-if="mfaSetupRequired">
+            <div style="font-weight:600;color:var(--text);margin-bottom:4px">Set up multi-factor authentication</div>
+            <div style="color:var(--text2);font-size:12px;margin-bottom:16px">
+              Your group requires MFA before you can continue. Choose a method below.
+            </div>
+            <div class="fp-toggle-group" style="margin-bottom:14px">
+              <button type="button" :class="['fp-toggle', enrollMethod === 'totp' && 'active']" @click="enrollMethod = 'totp'; resetEnroll()">Authenticator App</button>
+              <button type="button" :class="['fp-toggle', enrollMethod === 'email' && 'active']" @click="enrollMethod = 'email'; resetEnroll()">Email OTP</button>
+            </div>
+            <template v-if="enrollMethod === 'totp'">
+              <template v-if="!totpSecret">
+                <button class="btn btn-primary" style="width:100%;justify-content:center" :disabled="loading" @click="startTotpSetup">{{ loading ? 'Generating…' : 'Generate QR Code' }}</button>
+              </template>
+              <template v-else>
+                <div style="display:flex;justify-content:center;margin-bottom:10px">
+                  <img v-if="qrDataUrl" :src="qrDataUrl" alt="TOTP QR code" style="width:170px;height:170px;border-radius:8px;background:#fff;padding:6px" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Code from your app</label>
+                  <input v-model="enrollCode" class="input" placeholder="123456" inputmode="numeric" maxlength="6" @keydown.enter="confirmEnroll" />
+                </div>
+                <div v-if="error" style="color:var(--danger);font-size:12px;margin-bottom:12px">{{ error }}</div>
+                <button class="btn btn-primary" style="width:100%;justify-content:center" :disabled="saving || !enrollCode" @click="confirmEnroll">{{ saving ? 'Verifying…' : 'Enable & Continue' }}</button>
+              </template>
+            </template>
+            <template v-else>
+              <template v-if="!emailCodeSent">
+                <button class="btn btn-primary" style="width:100%;justify-content:center" :disabled="loading" @click="startEmailSetup">{{ loading ? 'Sending…' : 'Send Code to My Email' }}</button>
+              </template>
+              <template v-else>
+                <div class="form-group">
+                  <label class="form-label">Code from your email</label>
+                  <input v-model="enrollCode" class="input" placeholder="123456" inputmode="numeric" maxlength="6" @keydown.enter="confirmEnroll" />
+                </div>
+                <div v-if="error" style="color:var(--danger);font-size:12px;margin-bottom:12px">{{ error }}</div>
+                <div style="display:flex;gap:8px">
+                  <button class="btn" :disabled="loading" @click="startEmailSetup">Resend</button>
+                  <button class="btn btn-primary" style="flex:1;justify-content:center" :disabled="saving || !enrollCode" @click="confirmEnroll">{{ saving ? 'Verifying…' : 'Enable & Continue' }}</button>
+                </div>
+              </template>
+            </template>
+          </template>
+          <template v-else-if="showWizardSummary">
+            <div style="font-weight:600;color:var(--text);margin-bottom:4px">Welcome to SeyalRun</div>
+            <div style="color:var(--text2);font-size:12px;margin-bottom:16px">You're all set. Here's a quick summary of your access.</div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Roles</div>
+            <div style="margin-bottom:14px">
+              <span v-for="r in (auth.user?.roles || [])" :key="r" class="badge badge-blue" style="margin-right:4px">{{ r }}</span>
+              <span v-if="!(auth.user?.roles || []).length" style="color:var(--text2);font-size:12px">—</span>
+            </div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center" :disabled="loading" @click="doFinishWizard">{{ loading ? 'Finishing…' : 'Get Started' }}</button>
+          </template>
           <template v-else-if="mustChange">
             <div style="font-weight:600;color:var(--text);margin-bottom:4px">Set a new password</div>
             <div style="color:var(--text2);font-size:12px;margin-bottom:16px">
@@ -72,6 +124,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import QRCode from 'qrcode'
+import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -81,6 +135,7 @@ const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+const saving = ref(false)
 const ssoLoading = ref(false)
 const mustChange = ref(false)
 const newPassword = ref('')
@@ -89,6 +144,24 @@ const mfaPending = ref(false)
 const mfaMethod = ref('')
 const mfaCode = ref('')
 const resending = ref(false)
+
+// Group-forced MFA enrollment (no existing enrollment to verify — must set one up)
+const mfaSetupRequired = ref(false)
+const enrollMethod = ref<'totp' | 'email'>('totp')
+const enrollCode = ref('')
+const totpSecret = ref('')
+const qrDataUrl = ref('')
+const emailCodeSent = ref(false)
+function resetEnroll() {
+  enrollCode.value = ''
+  totpSecret.value = ''
+  qrDataUrl.value = ''
+  emailCodeSent.value = false
+  error.value = ''
+}
+
+// One-time first-login "welcome" summary (group policy: setup_wizard)
+const showWizardSummary = ref(false)
 
 onMounted(async () => {
   const params = new URLSearchParams(window.location.search)
@@ -103,9 +176,23 @@ onMounted(async () => {
   ssoLoading.value = true
   try {
     const result = await auth.exchangeSSO(code)
+    // Precedence matches api-gateway's own enforcement order (pwc, then mfa_pending,
+    // then mfa_setup_required all gate BEFORE anything else) — must_change_password
+    // isn't checked here since SSO-provisioned accounts never carry it, but MFA
+    // states can co-occur with a normal SSO login.
     if (result.mfaRequired) {
       mfaPending.value = true
       mfaMethod.value = result.mfaMethod || 'totp'
+      ssoLoading.value = false
+      return
+    }
+    if (result.mfaSetupRequired) {
+      mfaSetupRequired.value = true
+      ssoLoading.value = false
+      return
+    }
+    if (result.needsSetupWizard) {
+      showWizardSummary.value = true
       ssoLoading.value = false
       return
     }
@@ -149,13 +236,24 @@ async function doLogin() {
   error.value = ''
   try {
     const result = await auth.login(username.value, password.value, kioskTargetFromRedirect())
+    // Precedence matches api-gateway's own enforcement order: pwc gates BEFORE
+    // mfa_pending/mfa_setup_required (a session can carry both claims at once —
+    // must_change_password wins until it's cleared, so check it first here too).
+    if (auth.user?.must_change_password) {
+      mustChange.value = true   // keep password.value in memory as the current password
+      return
+    }
     if (result.mfaRequired) {
       mfaPending.value = true
       mfaMethod.value = result.mfaMethod || 'totp'
       return
     }
-    if (auth.user?.must_change_password) {
-      mustChange.value = true   // keep password.value in memory as the current password
+    if (result.mfaSetupRequired) {
+      mfaSetupRequired.value = true
+      return
+    }
+    if (result.needsSetupWizard) {
+      showWizardSummary.value = true
       return
     }
     goIn()
@@ -176,10 +274,18 @@ async function doChangePassword() {
   error.value = ''
   try {
     const result = await auth.changePassword(password.value, newPassword.value, kioskTargetFromRedirect())
+    mustChange.value = false
     if (result.mfaRequired) {
-      mustChange.value = false
       mfaPending.value = true
       mfaMethod.value = result.mfaMethod || 'totp'
+      return
+    }
+    if (result.mfaSetupRequired) {
+      mfaSetupRequired.value = true
+      return
+    }
+    if (result.needsSetupWizard) {
+      showWizardSummary.value = true
       return
     }
     goIn()
@@ -195,7 +301,12 @@ async function doVerifyMfa() {
   loading.value = true
   error.value = ''
   try {
-    await auth.verifyMfaLogin(mfaCode.value)
+    const result = await auth.verifyMfaLogin(mfaCode.value)
+    mfaPending.value = false
+    if (result.needsSetupWizard) {
+      showWizardSummary.value = true
+      return
+    }
     goIn()
   } catch (e: any) {
     error.value = e?.response?.data?.detail || 'Invalid code'
@@ -215,4 +326,57 @@ async function doResend() {
     resending.value = false
   }
 }
+
+// ── Group-forced MFA enrollment (mfaSetupRequired) ──────────────────────────
+async function startTotpSetup() {
+  loading.value = true; error.value = ''
+  try {
+    const { data } = await api.post('/auth/mfa/setup')
+    totpSecret.value = data.secret
+    qrDataUrl.value = await QRCode.toDataURL(data.otpauth_uri)
+  } catch (e: any) { error.value = e?.response?.data?.detail || 'Failed to start setup' }
+  finally { loading.value = false }
+}
+
+async function startEmailSetup() {
+  loading.value = true; error.value = ''
+  try {
+    await api.post('/auth/mfa/setup-email')
+    emailCodeSent.value = true
+  } catch (e: any) { error.value = e?.response?.data?.detail || 'Failed to send code' }
+  finally { loading.value = false }
+}
+
+async function confirmEnroll() {
+  saving.value = true; error.value = ''
+  try {
+    const { data } = await api.post('/auth/mfa/enable', { totp_code: enrollCode.value, method: enrollMethod.value })
+    const result = await auth.applyMfaEnableResult(data.access_token, data.user, data.needs_setup_wizard)
+    mfaSetupRequired.value = false
+    if (result.needsSetupWizard) {
+      showWizardSummary.value = true
+      return
+    }
+    goIn()
+  } catch (e: any) { error.value = e?.response?.data?.detail || 'Invalid code' }
+  finally { saving.value = false }
+}
+
+async function doFinishWizard() {
+  loading.value = true
+  try {
+    await auth.completeSetupWizard()
+    goIn()
+  } catch {
+    goIn()  // don't strand the user on a dismiss failure — worst case the wizard shows once more
+  } finally {
+    loading.value = false
+  }
+}
 </script>
+
+<style scoped>
+.fp-toggle-group { display: flex; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.fp-toggle { flex: 1; padding: 7px 0; font-size: 12px; font-weight: 500; background: transparent; border: none; color: var(--text2); cursor: pointer; }
+.fp-toggle.active { background: var(--bg2); color: var(--text); }
+</style>

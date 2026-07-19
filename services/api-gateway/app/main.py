@@ -187,6 +187,12 @@ async def auth_session(request: Request):
         "role_name": identity.get("role", "user"),
         "roles": identity.get("roles") or [identity.get("role", "user")],
         "must_change_password": bool(identity.get("pwc")),
+        # Surfaced for symmetry with must_change_password — a tab that reloads
+        # mid-gate (pending MFA verify, or group-forced enrollment) can at least
+        # see why every other call 403s, even though no route currently redirects
+        # on these (same pre-existing limitation must_change_password already had).
+        "mfa_pending": bool(identity.get("mfa_pending")),
+        "mfa_setup_required": bool(identity.get("mfa_setup_required")),
         "kiosk": bool(identity.get("kiosk_host_id")),
         "kiosk_host_id": identity.get("kiosk_host_id"),
     }

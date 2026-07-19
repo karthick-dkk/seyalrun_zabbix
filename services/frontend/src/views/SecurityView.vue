@@ -149,7 +149,7 @@ async function confirmTotp() {
   saving.value = true; error.value = ''
   try {
     const { data } = await api.post('/auth/mfa/enable', { totp_code: enrollCode.value, method: 'totp' })
-    auth.applyMfaEnableResult(data.access_token, data.user)
+    await auth.applyMfaEnableResult(data.access_token, data.user, data.needs_setup_wizard)
     status.method = 'totp'
     resetEnroll()
   } catch (e: any) { error.value = e?.response?.data?.detail || 'Invalid code' }
@@ -169,7 +169,7 @@ async function confirmEmail() {
   saving.value = true; error.value = ''
   try {
     const { data } = await api.post('/auth/mfa/enable', { totp_code: enrollCode.value, method: 'email' })
-    auth.applyMfaEnableResult(data.access_token, data.user)
+    await auth.applyMfaEnableResult(data.access_token, data.user, data.needs_setup_wizard)
     status.method = 'email'
     resetEnroll()
   } catch (e: any) { error.value = e?.response?.data?.detail || 'Invalid code' }

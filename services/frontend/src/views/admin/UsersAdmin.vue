@@ -113,6 +113,7 @@
                 <span v-if="g.zabbix_usrgrpid" class="src-badge src-badge--zbx" title="Synced from Zabbix">Z</span>
                 <span v-else class="src-badge src-badge--sr" title="SeyalRun native group">S</span>
                 {{ g.name }}
+                <span v-if="g.policies?.mfa_enforced" class="badge badge-blue" style="margin-left:4px;font-size:10px" title="Members must set up MFA">MFA</span>
               </td>
               <td style="color:var(--text2)">{{ g.description || '—' }}</td>
               <td style="color:var(--text2);font-size:12px">{{ g.member_count ?? '—' }}</td>
@@ -290,6 +291,21 @@
           <label class="fp-label">Description</label>
           <input v-model="groupForm.description" class="fp-input" placeholder="Optional description" />
         </div>
+
+        <div class="fp-section-head">Group Policies</div>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.mfa_enforced" :disabled="!auth.isSuperAdmin" />
+          <span>
+            <b>Require MFA for this group</b>
+            <span v-if="!auth.isSuperAdmin" style="color:var(--text2)"> (superadmin only)</span>
+            — members without MFA are blocked from everything except enrollment until they set it up.
+          </span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.setup_wizard" />
+          <span><b>Show setup wizard for new members</b> — a one-time guided first-login flow.</span>
+        </label>
+
         <div v-if="groupError" class="fp-error">{{ groupError }}</div>
       </div>
       <template #footer>
@@ -532,20 +548,25 @@ async function saveUser() {
 // ── Group panel ────────────────────────────────────────────────────────────
 const showGroupPanel = ref(false)
 const editingGroup = ref<any>(null)
-const groupForm = reactive({ name: '', description: '' })
+const groupForm = reactive({ name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false })
 const groupError = ref('')
 const savingGroup = ref(false)
 
 function openCreateGroup() {
   editingGroup.value = null
-  Object.assign(groupForm, { name: '', description: '' })
+  Object.assign(groupForm, { name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false })
   groupError.value = ''
   showGroupPanel.value = true
 }
 
 function openEditGroup(g: any) {
   editingGroup.value = g
-  Object.assign(groupForm, { name: g.name, description: g.description || '' })
+  Object.assign(groupForm, {
+    name: g.name, description: g.description || '',
+    mfa_enforced: !!g.policies?.mfa_enforced,
+    setup_wizard: !!g.policies?.setup_wizard,
+    notifications_enabled: !!g.policies?.notifications_enabled,
+  })
   groupError.value = ''
   showGroupPanel.value = true
 }
@@ -556,11 +577,20 @@ async function saveGroup() {
   savingGroup.value = true
   groupError.value = ''
   try {
+    let groupId = editingGroup.value?.id
     if (editingGroup.value) {
-      await api.put(`/users/groups/${editingGroup.value.id}`, { name: groupForm.name, description: groupForm.description })
+      await api.put(`/users/groups/${groupId}`, { name: groupForm.name, description: groupForm.description })
     } else {
-      await api.post('/users/groups', { name: groupForm.name, description: groupForm.description })
+      const { data } = await api.post('/users/groups', { name: groupForm.name, description: groupForm.description })
+      groupId = data.id
     }
+    // Group policies live in a separate doc (za_user_groups.policies) — mfa_enforced
+    // may only be turned ON by a genuine superadmin (server re-checks this too).
+    await api.put(`/users/groups/${groupId}/policies`, {
+      mfa_enforced: groupForm.mfa_enforced,
+      setup_wizard: groupForm.setup_wizard,
+      notifications_enabled: groupForm.notifications_enabled,
+    })
     closeGroupPanel()
     loadGroups()
   } catch (e: any) {
@@ -719,6 +749,8 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
 .fp-input:disabled { opacity: 0.5; cursor: not-allowed; }
 .fp-error { font-size: 12px; color: var(--danger); padding: 4px 0; }
 .fp-hint { font-size: 12px; color: var(--text2); background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; }
+.opt-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); padding: 3px 0; cursor: pointer; line-height: 1.5; }
+.opt-row input { accent-color: var(--accent2); width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
 
 .fp-toggle-group { display: flex; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .fp-toggle {

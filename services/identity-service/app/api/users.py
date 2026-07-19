@@ -93,13 +93,16 @@ def _guard_grants_allpower(permissions: dict | None, actor_role: str) -> None:
                             detail="only a superadmin may create/grant an all-access or reveal-capable role")
 
 
-def _guard_group_mfa_enforce(mfa_enforced: bool, actor_role: str) -> None:
-    """Turning on group-level MFA enforcement requires superadmin — same sensitivity
-    tier as reveal/all-access role grants (it forces every member into MFA and, per
-    the group-enforcement design, bypasses their role's own "mfa" capability flag)."""
-    if mfa_enforced and actor_role != "superadmin":
+def _guard_group_mfa_enforce(current: bool, new: bool, actor_role: str) -> None:
+    """Changing group-level MFA enforcement in EITHER direction requires superadmin.
+    Turning it ON forces every member into MFA (same sensitivity tier as reveal/
+    all-access role grants, and it bypasses members' own role-level "mfa" flag).
+    Turning it OFF removes a security control from every member — asymmetric
+    gating (superadmin-only ON, unrestricted OFF) would let any plain admin
+    silently strip a superadmin-imposed MFA requirement from a target group."""
+    if current != new and actor_role != "superadmin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="only a superadmin may enforce MFA for a group")
+                            detail="only a superadmin may change MFA enforcement for a group")
 
 
 @router.get("/users/groups/{group_id}/roles")
@@ -148,15 +151,16 @@ async def set_group_policies(
     actor_id: str | None = Header(default=None, alias="X-User-Id"),
     actor_name: str | None = Header(default=None, alias="X-User-Name"),
 ):
-    """mfa_enforced may only be turned ON by a genuine superadmin (see
-    _guard_group_mfa_enforce); setup_wizard/notifications_enabled stay
-    admin-gated like the rest of group management."""
+    """Changing mfa_enforced (either direction) requires a genuine superadmin (see
+    _guard_group_mfa_enforce); setup_wizard/notifications_enabled stay admin-gated
+    like the rest of group management."""
     result = await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))
     group = result.scalar_one_or_none()
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
 
-    _guard_group_mfa_enforce(payload.mfa_enforced, actor_role)
+    current_mfa_enforced = bool((group.policies or {}).get("mfa_enforced"))
+    _guard_group_mfa_enforce(current_mfa_enforced, payload.mfa_enforced, actor_role)
 
     group.policies = {
         "mfa_enforced": payload.mfa_enforced,
