@@ -305,6 +305,24 @@
           <input type="checkbox" v-model="groupForm.setup_wizard" />
           <span><b>Show setup wizard for new members</b> — a one-time guided first-login flow.</span>
         </label>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.notifications_enabled" />
+          <span><b>Notify by email</b> — mail job-run alerts for this group's members to the addresses below.</span>
+        </label>
+        <template v-if="groupForm.notifications_enabled">
+          <div class="fp-field">
+            <label class="fp-label">Recipient emails (one per line)</label>
+            <textarea v-model="groupForm.notify_emails_text" class="fp-input" rows="3" placeholder="oncall@example.com" style="resize:vertical;font-family:inherit"></textarea>
+          </div>
+          <div class="fp-field">
+            <label class="fp-label">Minimum severity</label>
+            <select v-model="groupForm.notify_min_severity" class="fp-input">
+              <option value="info">Info and above (everything)</option>
+              <option value="medium">Medium and above</option>
+              <option value="critical">Critical only</option>
+            </select>
+          </div>
+        </template>
 
         <div v-if="groupError" class="fp-error">{{ groupError }}</div>
       </div>
@@ -548,27 +566,41 @@ async function saveUser() {
 // ── Group panel ────────────────────────────────────────────────────────────
 const showGroupPanel = ref(false)
 const editingGroup = ref<any>(null)
-const groupForm = reactive({ name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false })
+const groupForm = reactive({
+  name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false,
+  notify_emails_text: '', notify_min_severity: 'medium',
+})
 const groupError = ref('')
 const savingGroup = ref(false)
 
 function openCreateGroup() {
   editingGroup.value = null
-  Object.assign(groupForm, { name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false })
+  Object.assign(groupForm, {
+    name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false,
+    notify_emails_text: '', notify_min_severity: 'medium',
+  })
   groupError.value = ''
   showGroupPanel.value = true
 }
 
-function openEditGroup(g: any) {
+async function openEditGroup(g: any) {
   editingGroup.value = g
   Object.assign(groupForm, {
     name: g.name, description: g.description || '',
     mfa_enforced: !!g.policies?.mfa_enforced,
     setup_wizard: !!g.policies?.setup_wizard,
     notifications_enabled: !!g.policies?.notifications_enabled,
+    notify_emails_text: '', notify_min_severity: 'medium',
   })
   groupError.value = ''
   showGroupPanel.value = true
+  if (g.policies?.notifications_enabled) {
+    try {
+      const { data } = await api.get(`/users/groups/${g.id}/notify-config`)
+      groupForm.notify_emails_text = (data.emails || []).join('\n')
+      groupForm.notify_min_severity = data.min_severity || 'medium'
+    } catch { /* leave defaults if the fetch fails */ }
+  }
 }
 
 function closeGroupPanel() { showGroupPanel.value = false; editingGroup.value = null }
@@ -585,12 +617,16 @@ async function saveGroup() {
       groupId = data.id
     }
     // Group policies live in a separate doc (za_user_groups.policies) — mfa_enforced
-    // may only be turned ON by a genuine superadmin (server re-checks this too).
+    // may only be changed by a genuine superadmin (server re-checks this too).
     await api.put(`/users/groups/${groupId}/policies`, {
       mfa_enforced: groupForm.mfa_enforced,
       setup_wizard: groupForm.setup_wizard,
       notifications_enabled: groupForm.notifications_enabled,
     })
+    if (groupForm.notifications_enabled) {
+      const emails = groupForm.notify_emails_text.split('\n').map(s => s.trim()).filter(Boolean)
+      await api.put(`/users/groups/${groupId}/notify-config`, { emails, min_severity: groupForm.notify_min_severity })
+    }
     closeGroupPanel()
     loadGroups()
   } catch (e: any) {

@@ -8,7 +8,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable
 
+import httpx
 import redis.asyncio as aioredis
+
+from libs.servicetoken import mint
 
 from .config import get_settings
 from .database import SessionLocal
@@ -56,6 +59,27 @@ async def _notify_completion(run_id: str, template_name: str, triggered_by: str 
         "created_at": notif.created_at.isoformat() if notif.created_at else None,
     })
     await get_redis().publish(channel, payload)
+
+    # Per-group email alerting (v1.2) — broadcast notifications (no specific
+    # user_id) have no single user's groups to resolve against, so they're out
+    # of scope here; best-effort, must never affect the in-app notification
+    # path above, which has already succeeded independently of this.
+    if user_id:
+        await _dispatch_group_alert(user_id, severity, notif.title)
+
+
+async def _dispatch_group_alert(user_id: str, severity: str, title: str) -> None:
+    settings = get_settings()
+    try:
+        token = mint("automation-service", "identity-service", settings.service_jwt_secret)
+        async with httpx.AsyncClient(base_url=settings.identity_service_url, timeout=10) as client:
+            await client.post(
+                "/api/v1/internal/notifications/dispatch-alert",
+                headers={"X-Service-Token": token},
+                json={"user_id": user_id, "severity": severity, "subject": f"SeyalRun: {title}", "body": title},
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("group alert dispatch failed (non-fatal, in-app notification already succeeded)")
 
 
 async def execute(

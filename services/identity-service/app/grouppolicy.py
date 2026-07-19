@@ -12,7 +12,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import ZAUserGroup, ZAUserGroupMember
+from .models import ZAGroupNotifyConfig, ZAUserGroup, ZAUserGroupMember
+
+_SEVERITY_RANK = {"info": 0, "medium": 1, "critical": 2}
 
 
 async def effective_group_policies(session: AsyncSession, user_id: str) -> dict:
@@ -29,3 +31,29 @@ async def effective_group_policies(session: AsyncSession, user_id: str) -> dict:
         "mfa_enforced": any((d or {}).get("mfa_enforced") for d in docs),
         "setup_wizard": any((d or {}).get("setup_wizard") for d in docs),
     }
+
+
+async def notify_recipients(session: AsyncSession, user_id: str, severity: str) -> list[str]:
+    """Every recipient email that should hear about a notification of this
+    severity, across every group the user belongs to with notifications
+    enabled and a min_severity at or below it. Deduped, order-independent."""
+    rows = (
+        await session.execute(
+            select(ZAUserGroup.id, ZAUserGroup.policies)
+            .join(ZAUserGroupMember, ZAUserGroupMember.group_id == ZAUserGroup.id)
+            .where(ZAUserGroupMember.user_id == user_id)
+        )
+    ).all()
+    eligible_group_ids = [gid for gid, policies in rows if (policies or {}).get("notifications_enabled")]
+    if not eligible_group_ids:
+        return []
+
+    cfgs = (
+        await session.execute(select(ZAGroupNotifyConfig).where(ZAGroupNotifyConfig.group_id.in_(eligible_group_ids)))
+    ).scalars().all()
+    sev_rank = _SEVERITY_RANK.get(severity, 0)
+    emails: set[str] = set()
+    for cfg in cfgs:
+        if sev_rank >= _SEVERITY_RANK.get(cfg.min_severity, 1):
+            emails.update(cfg.emails or [])
+    return sorted(emails)
