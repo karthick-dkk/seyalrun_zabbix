@@ -102,7 +102,13 @@ onMounted(async () => {
   window.history.replaceState(null, '', url.toString())
   ssoLoading.value = true
   try {
-    await auth.exchangeSSO(code)
+    const result = await auth.exchangeSSO(code)
+    if (result.mfaRequired) {
+      mfaPending.value = true
+      mfaMethod.value = result.mfaMethod || 'totp'
+      ssoLoading.value = false
+      return
+    }
     // goIn() honors route.query.redirect — the intended page the guard bounced
     // here from (e.g. #/assets from the Zabbix module). Landing everyone on '/'
     // regardless of which SeyalRun page they clicked was the bug: every page

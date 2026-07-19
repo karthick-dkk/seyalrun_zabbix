@@ -210,10 +210,14 @@ export const useAuthStore = defineStore('auth', {
       await api.post('/auth/mfa/resend')
     },
 
+    // Zabbix SSO is a parallel credential path, not exempt from a user's own MFA
+    // setting — same mfa_required shape as login()/changePassword().
     async exchangeSSO(ssoCode: string) {
       const { data } = await api.post('/auth/sso-exchange', { sso_code: ssoCode })
       this._applyToken(data.access_token, data.user)
+      if (data.mfa_required) return { mfaRequired: true, mfaMethod: data.mfa_method as string }
       await this.loadNav()
+      return { mfaRequired: false }
     },
 
     // Instant server-side revocation, not just forgetting the token

@@ -330,16 +330,22 @@ async def sso_exchange(payload: SSOExchangeRequest, session: AsyncSession = Depe
 
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
-    token = await create_session(
-        redis_client,
-        user_id=user.id, username=user.username, role=primary, roles=roles,
-        idle_minutes=settings.session_idle_minutes,
-        pwc=user.must_change_password,
+    # Route through the same helper as /login and /change-password — Zabbix SSO is a
+    # parallel credential path (a valid sso_code alone used to be enough for a full
+    # session), so a user who enabled MFA specifically to require a second factor
+    # was still fully bypassable through this endpoint. Mirrors the pwc handling
+    # immediately above, which already went through _mint_session for this reason.
+    token, mfa_pending = await _mint_session(session, user, roles, primary, settings, pwc=user.must_change_password)
+
+    await log_action(
+        session, user_id=user.id, username=user.username,
+        action="login_sso" if not mfa_pending else "login_sso_mfa_pending", resource_type="session",
     )
 
-    await log_action(session, user_id=user.id, username=user.username, action="login_sso", resource_type="session")
-
-    return TokenResponse(access_token=token, user=await _user_out(session, user))
+    return TokenResponse(
+        access_token=token, user=await _user_out(session, user),
+        mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
+    )
 
 
 # ── MFA — TOTP authenticator or email OTP. Gates login (mfa_pending session
