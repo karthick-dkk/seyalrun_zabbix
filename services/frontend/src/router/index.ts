@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { setToken } from '@/api/client'
 
-export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'integration', 'trigger-bindings', 'platform', 'health', 'housekeeping', 'log-backend']
+export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'integration', 'trigger-bindings', 'platform', 'health', 'housekeeping', 'log-backend', 'mail-settings']
 
 // Integration/platform/health/security/housekeeping/log-backend/audit moved out of the
 // standalone Admin nav into their own Settings page (reached via the topbar gear icon) —
@@ -10,7 +10,7 @@ export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'creden
 // second route prefix onto them. /admin/<section> for these still works unchanged (Zabbix's
 // embedded "Administration > SeyalRun" flyout links straight to those PHP-rendered routes),
 // this is purely an additional, better-organized path for the standalone app.
-export const VALID_SETTINGS_SECTIONS = ['integration', 'platform', 'health', 'security', 'housekeeping', 'log-backend', 'audit']
+export const VALID_SETTINGS_SECTIONS = ['integration', 'platform', 'health', 'security', 'housekeeping', 'log-backend', 'mail-settings', 'audit']
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -35,6 +35,14 @@ const router = createRouter({
       path: '/zones',
       name: 'zones',
       component: () => import('@/views/ZonesView.vue'),
+    },
+    {
+      // Self-service MFA enrollment — deliberately NOT under /admin or /settings
+      // (those are admin-gated at the router level); reachable by any authenticated
+      // user, same as the credential-reveal MFA check it feeds into.
+      path: '/security',
+      name: 'security-mfa',
+      component: () => import('@/views/SecurityView.vue'),
     },
     {
       path: '/admin/:section',

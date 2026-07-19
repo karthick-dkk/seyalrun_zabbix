@@ -12,7 +12,25 @@
       </div>
       <div class="card">
         <div class="card-body">
-          <template v-if="mustChange">
+          <template v-if="mfaPending">
+            <div style="font-weight:600;color:var(--text);margin-bottom:4px">Verify your identity</div>
+            <div style="color:var(--text2);font-size:12px;margin-bottom:16px">
+              <template v-if="mfaMethod === 'email'">Enter the 6-digit code we emailed you.</template>
+              <template v-else>Enter the 6-digit code from your authenticator app.</template>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Code</label>
+              <input v-model="mfaCode" class="input" placeholder="123456" inputmode="numeric" maxlength="6" @keydown.enter="doVerifyMfa" autofocus />
+            </div>
+            <div v-if="error" style="color:var(--danger);font-size:12px;margin-bottom:12px">{{ error }}</div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center" @click="doVerifyMfa" :disabled="loading">
+              {{ loading ? 'Verifying…' : 'Verify' }}
+            </button>
+            <button v-if="mfaMethod === 'email'" class="btn" style="width:100%;justify-content:center;margin-top:8px" @click="doResend" :disabled="resending">
+              {{ resending ? 'Sending…' : 'Resend code' }}
+            </button>
+          </template>
+          <template v-else-if="mustChange">
             <div style="font-weight:600;color:var(--text);margin-bottom:4px">Set a new password</div>
             <div style="color:var(--text2);font-size:12px;margin-bottom:16px">
               You signed in with the default password. Choose a new one (min 8
@@ -67,6 +85,10 @@ const ssoLoading = ref(false)
 const mustChange = ref(false)
 const newPassword = ref('')
 const confirmPassword = ref('')
+const mfaPending = ref(false)
+const mfaMethod = ref('')
+const mfaCode = ref('')
+const resending = ref(false)
 
 onMounted(async () => {
   const params = new URLSearchParams(window.location.search)
@@ -120,7 +142,12 @@ async function doLogin() {
   loading.value = true
   error.value = ''
   try {
-    await auth.login(username.value, password.value, kioskTargetFromRedirect())
+    const result = await auth.login(username.value, password.value, kioskTargetFromRedirect())
+    if (result.mfaRequired) {
+      mfaPending.value = true
+      mfaMethod.value = result.mfaMethod || 'totp'
+      return
+    }
     if (auth.user?.must_change_password) {
       mustChange.value = true   // keep password.value in memory as the current password
       return
@@ -142,12 +169,44 @@ async function doChangePassword() {
   loading.value = true
   error.value = ''
   try {
-    await auth.changePassword(password.value, newPassword.value, kioskTargetFromRedirect())
+    const result = await auth.changePassword(password.value, newPassword.value, kioskTargetFromRedirect())
+    if (result.mfaRequired) {
+      mustChange.value = false
+      mfaPending.value = true
+      mfaMethod.value = result.mfaMethod || 'totp'
+      return
+    }
     goIn()
   } catch (e: any) {
     error.value = e?.response?.data?.detail || 'Password change failed'
   } finally {
     loading.value = false
+  }
+}
+
+async function doVerifyMfa() {
+  if (!mfaCode.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    await auth.verifyMfaLogin(mfaCode.value)
+    goIn()
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || 'Invalid code'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function doResend() {
+  resending.value = true
+  error.value = ''
+  try {
+    await auth.resendMfaCode()
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || 'Failed to resend code'
+  } finally {
+    resending.value = false
   }
 }
 </script>

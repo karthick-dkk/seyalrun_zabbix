@@ -46,13 +46,13 @@
           </div>
         </template>
       </div>
-      <div class="sidebar-user">
+      <router-link to="/security" class="sidebar-user" style="text-decoration:none;color:inherit" title="Security — MFA settings">
         <div class="avatar">{{ (auth.user?.username || '?').charAt(0).toUpperCase() }}</div>
         <div class="user-meta">
           <div class="user-name">{{ auth.user?.username }}</div>
           <div class="user-role">{{ auth.roles.join(', ') || auth.user?.role_name }}</div>
         </div>
-      </div>
+      </router-link>
       <div class="sidebar-logout">
         <button class="btn btn-sm" @click="doLogout">
           <span class="nav-label">Logout</span>

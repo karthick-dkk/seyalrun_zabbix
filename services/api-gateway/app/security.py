@@ -133,6 +133,9 @@ async def lookup_session(token: str) -> dict:
         # Forced password rotation: while set, main.py locks this session to
         # the change-password endpoint (set for default-seeded credentials).
         "pwc": bool(blob.get("pwc", False)),
+        # Login-time MFA gate: while set, main.py locks this session to
+        # auth/mfa/verify-login (+ resend/nav) until the code is verified.
+        "mfa_pending": bool(blob.get("mfa_pending", False)),
         # Server-signed at login (see identity-service auth.py) — forwarded downstream
         # as X-Kiosk-Host-Id so terminal-service can enforce the single-host binding.
         # Never derived from anything client-controlled at this layer.

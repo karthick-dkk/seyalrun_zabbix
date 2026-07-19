@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +17,7 @@ from ..audit import log_action
 from ..config import get_settings
 from ..database import get_session
 from ..deps import require_service_token
+from ..mailer import MailError, send_mail
 from ..models import ZARole, ZAUser
 from ..plugins.idp.local import LocalIdentityProvider
 from ..plugins.idp.zabbix_sso import ZabbixSSOProvider
@@ -98,11 +101,86 @@ async def _user_out(session: AsyncSession, user: ZAUser, kiosk_host_id: str | No
         roles=eff,
         is_active=user.is_active,
         totp_enabled=user.totp_enabled,
+        mfa_method=user.mfa_method,
         must_change_password=user.must_change_password,
         created_at=user.created_at,
         kiosk=bool(kiosk_host_id),
         kiosk_host_id=kiosk_host_id,
     )
+
+
+# ── Email-OTP store (Redis) — one code per (user, purpose): "login" (the
+# login-time MFA gate), "enroll" (setting up email MFA), "disable" and
+# "reveal" (re-verifying an existing email-MFA user for a sensitive action).
+# TOTP needs none of this — pyotp verifies against the stored secret directly.
+_MFA_OTP_TTL = 300  # 5 minutes
+_MFA_OTP_MAX_ATTEMPTS = 5
+_MFA_OTP_RESEND_COOLDOWN = 30
+
+
+def _otp_key(user_id: str, purpose: str) -> str:
+    return f"mfa_otp:{purpose}:{user_id}"
+
+
+async def _issue_otp(user: ZAUser, session: AsyncSession, purpose: str) -> None:
+    if not user.email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="add an email address to your account before using Email OTP")
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    now = int(time.time())
+    blob = {"code": code, "expires_at": now + _MFA_OTP_TTL, "attempts": 0, "sent_at": now}
+    await redis_client.set(_otp_key(user.id, purpose), json.dumps(blob), ex=_MFA_OTP_TTL)
+    try:
+        await send_mail(session, user.email, "Your SeyalRun verification code",
+                        f"Your verification code is {code}. It expires in 5 minutes.")
+    except MailError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"failed to send verification email: {exc}") from exc
+
+
+async def _consume_otp(user_id: str, code: str, purpose: str) -> None:
+    key = _otp_key(user_id, purpose)
+    raw = await redis_client.get(key)
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="no verification code pending — request a new one")
+    blob = json.loads(raw)
+    if int(time.time()) > blob.get("expires_at", 0):
+        await redis_client.delete(key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="verification code expired")
+    if blob.get("attempts", 0) >= _MFA_OTP_MAX_ATTEMPTS:
+        await redis_client.delete(key)
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="too many attempts — request a new code")
+    if not code or not hmac.compare_digest(code, blob.get("code", "")):
+        blob["attempts"] = blob.get("attempts", 0) + 1
+        ttl = max(int(blob["expires_at"] - time.time()), 1)
+        await redis_client.set(key, json.dumps(blob), ex=ttl)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid code")
+    await redis_client.delete(key)
+
+
+async def _mint_session(
+    session: AsyncSession, user: ZAUser, roles: list[str], primary: str, settings,
+    *, kiosk_host_id: str | None = None, pwc: bool = False,
+) -> tuple[str, bool]:
+    """The ONE place every login path (password, SSO, post-password-change
+    re-mint) goes through to turn a resolved identity into a session — so the
+    mfa_pending claim can never be forgotten on one path while being enforced
+    on another. Mirrors create_session's pwc handling: mint immediately with
+    the restrictive claim set, rather than withholding the session."""
+    mfa_pending = bool(user.mfa_method)
+    token = await create_session(
+        redis_client,
+        user_id=user.id, username=user.username, role=primary, roles=roles,
+        idle_minutes=settings.session_idle_minutes,
+        kiosk_host_id=kiosk_host_id,
+        pwc=pwc,
+        mfa_pending=mfa_pending,
+    )
+    if mfa_pending and user.mfa_method == "email":
+        await _issue_otp(user, session, "login")
+    return token, mfa_pending
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -141,24 +219,24 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
 
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     kiosk_host_id = await _resolve_kiosk_host(payload.kiosk_target, settings)
-    token = await create_session(
-        redis_client,
-        user_id=user.id, username=user.username, role=primary, roles=roles,
-        idle_minutes=settings.session_idle_minutes,
-        kiosk_host_id=kiosk_host_id,
-        pwc=user.must_change_password,
+    token, mfa_pending = await _mint_session(
+        session, user, roles, primary, settings,
+        kiosk_host_id=kiosk_host_id, pwc=user.must_change_password,
     )
 
     await log_action(
         session,
         user_id=user.id,
         username=user.username,
-        action="login",
+        action="login" if not mfa_pending else "login_mfa_pending",
         resource_type="session",
         ip_address=request.client.host if request.client else "",
     )
 
-    return TokenResponse(access_token=token, user=await _user_out(session, user, kiosk_host_id))
+    return TokenResponse(
+        access_token=token, user=await _user_out(session, user, kiosk_host_id),
+        mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
+    )
 
 
 @router.post("/change-password", response_model=TokenResponse)
@@ -189,19 +267,19 @@ async def change_password(
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     kiosk_host_id = await _resolve_kiosk_host(payload.kiosk_target, settings)
-    token = await create_session(
-        redis_client,
-        user_id=user.id, username=user.username, role=primary, roles=roles,
-        idle_minutes=settings.session_idle_minutes,
-        kiosk_host_id=kiosk_host_id,
-    )
+    # A forced-password-change user may ALSO have MFA enabled — re-mint through
+    # the same helper as /login so the mfa_pending claim isn't dropped on this path.
+    token, mfa_pending = await _mint_session(session, user, roles, primary, settings, kiosk_host_id=kiosk_host_id)
 
     await log_action(
         session, user_id=user.id, username=user.username, action="password_change",
         resource_type="user", ip_address=request.client.host if request.client else "",
     )
 
-    return TokenResponse(access_token=token, user=await _user_out(session, user, kiosk_host_id))
+    return TokenResponse(
+        access_token=token, user=await _user_out(session, user, kiosk_host_id),
+        mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
+    )
 
 
 @router.post("/sso-init", response_model=SSOInitResponse)
@@ -264,14 +342,20 @@ async def sso_exchange(payload: SSOExchangeRequest, session: AsyncSession = Depe
     return TokenResponse(access_token=token, user=await _user_out(session, user))
 
 
-# ── TOTP MFA — gates credential reveal (Feature 6) ───────────────────────────
+# ── MFA — TOTP authenticator or email OTP. Gates login (mfa_pending session
+# claim, see _mint_session above) AND credential reveal (mfa_verify below). ──
 
 class MfaCodeRequest(BaseModel):
-    totp_code: str = ""
+    totp_code: str = ""  # also carries the email-OTP code when method == "email"
+    method: str = "totp"  # "totp" | "email" — only read by /mfa/enable
     # Credential the reveal token will be scoped to. The minted token is only
     # valid for this credential id and this user, so a token cannot be replayed
     # to reveal a different credential or by a different user.
     credential_id: str = ""
+
+
+class MfaVerifyLoginRequest(BaseModel):
+    code: str = ""
 
 
 async def _require_user(session: AsyncSession, user_id: str | None) -> ZAUser:
@@ -290,7 +374,7 @@ async def mfa_status(
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ):
     user = await _require_user(session, x_user_id)
-    return {"enabled": bool(user.totp_enabled)}
+    return {"enabled": bool(user.mfa_method), "method": user.mfa_method}
 
 
 @router.post("/mfa/setup")
@@ -298,17 +382,36 @@ async def mfa_setup(
     session: AsyncSession = Depends(get_session),
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ):
-    """Generate a new TOTP secret (not yet enabled). Returns the secret + otpauth URI for a QR app."""
+    """Generate a new TOTP secret (not yet enabled). Returns the secret + otpauth URI for a QR app.
+    Gateway-gated on the "mfa" role flag (services/api-gateway/app/rbac.py::is_authorized)."""
     import pyotp
     from ..vault import encrypt
 
     user = await _require_user(session, x_user_id)
+    if user.mfa_method:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="MFA is already enabled — disable it first to switch methods")
     secret = pyotp.random_base32()
     user.totp_secret = encrypt(secret)
     user.totp_enabled = False
     await session.commit()
     uri = pyotp.TOTP(secret).provisioning_uri(name=user.username, issuer_name="SeyalRun")
     return {"secret": secret, "otpauth_uri": uri}
+
+
+@router.post("/mfa/setup-email")
+async def mfa_setup_email(
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """Send the first confirmation code for enrolling email-OTP MFA. Gateway-gated
+    on the "mfa" role flag, same as /mfa/setup."""
+    user = await _require_user(session, x_user_id)
+    if user.mfa_method:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="MFA is already enabled — disable it first to switch methods")
+    await _issue_otp(user, session, "enroll")
+    return {"sent": True}
 
 
 @router.post("/mfa/enable")
@@ -321,27 +424,141 @@ async def mfa_enable(
     from ..vault import decrypt
 
     user = await _require_user(session, x_user_id)
-    if not user.totp_secret:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="run /auth/mfa/setup first")
-    if not pyotp.TOTP(decrypt(user.totp_secret)).verify(payload.totp_code, valid_window=1):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid code")
-    user.totp_enabled = True
+    if user.mfa_method:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is already enabled")
+
+    if payload.method == "email":
+        await _consume_otp(user.id, payload.totp_code, "enroll")
+        user.mfa_method = "email"
+    else:
+        if not user.totp_secret:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="run /auth/mfa/setup first")
+        if not pyotp.TOTP(decrypt(user.totp_secret)).verify(payload.totp_code, valid_window=1):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid code")
+        user.totp_enabled = True
+        user.mfa_method = "totp"
+
     await session.commit()
-    await log_action(session, user_id=user.id, username=user.username, action="mfa.enable", resource_type="user")
-    return {"enabled": True}
+    await log_action(session, user_id=user.id, username=user.username, action="mfa.enable",
+                     resource_type="user", details={"method": user.mfa_method})
+    return {"enabled": True, "method": user.mfa_method}
+
+
+@router.post("/mfa/disable/request-code")
+async def mfa_disable_request_code(
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """Email-MFA users need a fresh code before /mfa/disable will accept it —
+    TOTP users just enter their authenticator's current code directly."""
+    user = await _require_user(session, x_user_id)
+    if user.mfa_method != "email":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="not applicable for this MFA method")
+    await _issue_otp(user, session, "disable")
+    return {"sent": True}
 
 
 @router.post("/mfa/disable")
 async def mfa_disable(
+    payload: MfaCodeRequest,
     session: AsyncSession = Depends(get_session),
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ):
+    """Disabling now requires proof of possession (a valid current code) — previously
+    any authenticated session could clear MFA with zero verification."""
+    import pyotp
+    from ..vault import decrypt
+
     user = await _require_user(session, x_user_id)
+    if not user.mfa_method:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled")
+
+    if user.mfa_method == "totp":
+        if not user.totp_secret or not pyotp.TOTP(decrypt(user.totp_secret)).verify(payload.totp_code, valid_window=1):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid code")
+    else:
+        await _consume_otp(user.id, payload.totp_code, "disable")
+
     user.totp_secret = ""
     user.totp_enabled = False
+    user.mfa_method = None
     await session.commit()
     await log_action(session, user_id=user.id, username=user.username, action="mfa.disable", resource_type="user")
     return {"enabled": False}
+
+
+@router.post("/mfa/verify-login", response_model=TokenResponse)
+async def mfa_verify_login(
+    payload: MfaVerifyLoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """Completes the login-time MFA gate: the session minted by /auth/login (or
+    /auth/change-password) carries mfa_pending, and api-gateway blocks every
+    path except this one + /auth/mfa/resend + /auth/nav while it's set (see
+    api-gateway/app/main.py). On success, mints a clean session with the claim
+    cleared — mirrors /auth/change-password's re-mint, no re-login needed."""
+    import pyotp
+    from ..vault import decrypt
+
+    user = await _require_user(session, x_user_id)
+    if not user.mfa_method:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled for this account")
+
+    if user.mfa_method == "totp":
+        if not user.totp_secret or not pyotp.TOTP(decrypt(user.totp_secret)).verify(payload.code, valid_window=1):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid code")
+    else:
+        await _consume_otp(user.id, payload.code, "login")
+
+    settings = get_settings()
+    roles, primary = await _resolve_roles(session, user.id, user.role_id)
+    token = await create_session(
+        redis_client,
+        user_id=user.id, username=user.username, role=primary, roles=roles,
+        idle_minutes=settings.session_idle_minutes,
+    )
+    await log_action(
+        session, user_id=user.id, username=user.username, action="mfa.verify_login",
+        resource_type="session", ip_address=request.client.host if request.client else "",
+    )
+    return TokenResponse(access_token=token, user=await _user_out(session, user))
+
+
+@router.post("/mfa/resend")
+async def mfa_resend(
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """Re-sends the login-time email OTP. Rate-limited so a pending session
+    can't be used to email-bomb the account's mailbox."""
+    user = await _require_user(session, x_user_id)
+    if user.mfa_method != "email":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="resend is only for the email OTP method")
+    raw = await redis_client.get(_otp_key(user.id, "login"))
+    if raw:
+        blob = json.loads(raw)
+        wait = _MFA_OTP_RESEND_COOLDOWN - (int(time.time()) - blob.get("sent_at", 0))
+        if wait > 0:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                detail=f"please wait {wait}s before requesting another code")
+    await _issue_otp(user, session, "login")
+    return {"sent": True}
+
+
+@router.post("/mfa/reveal/request-code")
+async def mfa_reveal_request_code(
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """Email-MFA users need a fresh code before /mfa/verify (the credential-reveal
+    gate) will accept it — TOTP users just enter their authenticator's current code."""
+    user = await _require_user(session, x_user_id)
+    if user.mfa_method != "email":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="not applicable for this MFA method")
+    await _issue_otp(user, session, "reveal")
+    return {"sent": True}
 
 
 @router.post("/mfa/verify")
@@ -350,8 +567,11 @@ async def mfa_verify(
     session: AsyncSession = Depends(get_session),
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ):
-    """Verify the user's TOTP code and mint a short-lived (30s) reveal token. If the user has
-    no TOTP configured, a token is still issued (the reveal endpoint requires only a valid token)."""
+    """Verify the caller's MFA code and mint a short-lived (30s) reveal token,
+    scoped to one credential. Credential reveal is MFA-mandatory: a caller with
+    no MFA enabled is rejected outright (previously this silently issued a
+    reveal token with zero MFA check when the caller had never enabled TOTP —
+    that gap is the reason this endpoint now 403s here instead)."""
     import pyotp
     from ..vault import decrypt
 
@@ -359,9 +579,15 @@ async def mfa_verify(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="credential_id required")
 
     user = await _require_user(session, x_user_id)
-    if user.totp_enabled and user.totp_secret:
-        if not pyotp.TOTP(decrypt(user.totp_secret)).verify(payload.totp_code, valid_window=1):
+    if not user.mfa_method:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="MFA must be enabled to reveal credentials — enable it in Security settings")
+
+    if user.mfa_method == "totp":
+        if not user.totp_secret or not pyotp.TOTP(decrypt(user.totp_secret)).verify(payload.totp_code, valid_window=1):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid code")
+    else:
+        await _consume_otp(user.id, payload.totp_code, "reveal")
 
     settings = get_settings()
     now = int(time.time())

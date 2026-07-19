@@ -231,12 +231,16 @@
       <div class="modal" style="width:min(440px,94vw)">
         <div class="modal-header">View Secret — {{ reveal.cred?.name || reveal.cred?.username }}<button class="btn btn-sm btn-icon" @click="closeReveal">✕</button></div>
         <div class="modal-body">
-          <!-- Step 1: MFA code (only if user has TOTP enabled) -->
+          <!-- Step 1: MFA code (MFA is mandatory to reveal — see reveal.error if not enabled) -->
           <div v-if="reveal.needCode && !reveal.secret">
-            <p style="font-size:13px;color:var(--text2);margin:0 0 10px">Enter your 6-digit authenticator code to reveal this secret.</p>
+            <p v-if="reveal.mfaMethod === 'email'" style="font-size:13px;color:var(--text2);margin:0 0 10px">
+              Enter the 6-digit code emailed to you.
+              <button class="btn btn-sm" style="margin-left:6px" :disabled="reveal.busy" @click="sendRevealCode">{{ reveal.codeSent ? 'Resend' : 'Send code' }}</button>
+            </p>
+            <p v-else style="font-size:13px;color:var(--text2);margin:0 0 10px">Enter your 6-digit authenticator code to reveal this secret.</p>
             <input v-model="reveal.code" class="fp-input" inputmode="numeric" maxlength="6" placeholder="123456" style="text-align:center;letter-spacing:6px;font-size:18px" @keyup.enter="doReveal" />
           </div>
-          <div v-else-if="!reveal.secret" style="font-size:13px;color:var(--text2)">Revealing…</div>
+          <div v-else-if="!reveal.secret && !reveal.error" style="font-size:13px;color:var(--text2)">Revealing…</div>
 
           <!-- Step 2: revealed secret -->
           <div v-if="reveal.secret">
@@ -548,18 +552,39 @@ function fmtDate(iso?: string | null): string {
   return iso ? new Date(iso).toLocaleString() : '—'
 }
 
-// ── Reveal secret (MFA-gated, Feature 6) ────────────────────────────────────
+// ── Reveal secret (MFA-mandatory — see auth.py::mfa_verify) ─────────────────
 const reveal = reactive<any>({
-  visible: false, cred: null, needCode: false, code: '', secret: null,
+  visible: false, cred: null, needCode: false, mfaMethod: '', codeSent: false, code: '', secret: null,
   blurred: true, countdown: 30, busy: false, error: '', timer: null as any,
 })
 async function openReveal(c: any) {
-  Object.assign(reveal, { visible: true, cred: c, needCode: false, code: '', secret: null, blurred: true, countdown: 30, busy: false, error: '' })
+  Object.assign(reveal, {
+    visible: true, cred: c, needCode: false, mfaMethod: '', codeSent: false,
+    code: '', secret: null, blurred: true, countdown: 30, busy: false, error: '',
+  })
+  let enabled = false
   try {
     const { data } = await api.get('/auth/mfa/status')
-    reveal.needCode = !!data.enabled
-  } catch { reveal.needCode = false }
-  if (!reveal.needCode) doReveal()
+    enabled = !!data.enabled
+    reveal.mfaMethod = data.method || ''
+  } catch { /* treat as not enabled */ }
+  if (!enabled) {
+    reveal.error = 'Enable MFA in Security settings to reveal credentials.'
+    return
+  }
+  reveal.needCode = true
+  if (reveal.mfaMethod === 'email') await sendRevealCode()
+}
+async function sendRevealCode() {
+  reveal.busy = true; reveal.error = ''
+  try {
+    await api.post('/auth/mfa/reveal/request-code')
+    reveal.codeSent = true
+  } catch (e: any) {
+    reveal.error = e?.response?.data?.detail || 'Failed to send code'
+  } finally {
+    reveal.busy = false
+  }
 }
 async function doReveal() {
   reveal.busy = true; reveal.error = ''

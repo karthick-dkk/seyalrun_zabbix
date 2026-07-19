@@ -57,7 +57,7 @@ BUILTIN_ROLE_PERMS: dict[str, dict] = {
     "superadmin": {"all": True, "flags": ["reveal"], "perms": {}},
 
     "admin": {
-        "flags": ["reveal"],
+        "flags": ["reveal", "mfa"],
         "perms": {
             **_grant(_INVENTORY + _AUTOMATION + _SELF),
             "authorizations": list(ALL_METHODS),
@@ -134,6 +134,12 @@ def doc_can_reveal(doc: dict | None) -> bool:
     if not doc:
         return False
     return bool(doc.get("all")) or "reveal" in (doc.get("flags") or [])
+
+
+def doc_can_mfa(doc: dict | None) -> bool:
+    if not doc:
+        return False
+    return bool(doc.get("all")) or "mfa" in (doc.get("flags") or [])
 
 
 def bypasses_authz(roles: list[str]) -> bool:

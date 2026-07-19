@@ -46,6 +46,10 @@
             <input type="checkbox" v-model="form.all" :disabled="modal.readonly" />
             <span><b>Full / all-admin access</b> (every module + all hosts + reveal — like superadmin)</span>
           </label>
+          <label class="opt-row" v-if="!form.all">
+            <input type="checkbox" v-model="form.mfa" :disabled="modal.readonly" />
+            <span><b>Allow MFA enrollment</b> (lets members of this role enable Authenticator/Email MFA)</span>
+          </label>
           <template v-if="!form.all">
             <div class="fp-section-head">Module access</div>
             <div class="area-note">
@@ -113,7 +117,7 @@ const saving = ref(false)
 const error = ref('')
 
 const modal = reactive({ open: false, title: '', editing: false, readonly: false, id: '' })
-const form = reactive<any>({ name: '', description: '', all: false, all_hosts: false, reveal: false, areas: {} as Record<string, string> })
+const form = reactive<any>({ name: '', description: '', all: false, all_hosts: false, reveal: false, mfa: false, areas: {} as Record<string, string> })
 
 function blankAreas() { const o: Record<string, string> = {}; AREAS.forEach(a => o[a.key] = 'none'); return o }
 
@@ -145,7 +149,7 @@ function permsToAreas(p: any): Record<string, string> {
 
 function openCreate() {
   Object.assign(modal, { open: true, title: 'Create Custom Role', editing: false, readonly: false, id: '' })
-  Object.assign(form, { name: '', description: '', all: false, all_hosts: false, reveal: false, areas: blankAreas() })
+  Object.assign(form, { name: '', description: '', all: false, all_hosts: false, reveal: false, mfa: false, areas: blankAreas() })
   error.value = ''
 }
 function openView(r: any) {
@@ -154,13 +158,14 @@ function openView(r: any) {
   Object.assign(form, {
     name: r.name, description: r.description || '',
     all: !!r.permissions?.all, all_hosts: !!r.permissions?.all_hosts, reveal: !!r.permissions?.reveal,
+    mfa: !!r.permissions?.mfa,
     areas: permsToAreas(r.permissions || {}),
   })
   error.value = ''
 }
 
 function buildPerms(): any {
-  if (form.all) return { all: true, reveal: true, all_hosts: true }
+  if (form.all) return { all: true, reveal: true, all_hosts: true, mfa: true }
   const read: string[] = [], write: string[] = []
   let reveal = false, all_hosts = false
   for (const a of AREAS) {
@@ -172,7 +177,7 @@ function buildPerms(): any {
     } else if (lvl === 'write') write.push(...a.segs)
     else if (lvl === 'read') read.push(...a.segs)
   }
-  return { read, write, reveal, all_hosts }
+  return { read, write, reveal, all_hosts, mfa: !!form.mfa }
 }
 
 async function save() {

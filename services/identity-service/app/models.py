@@ -54,6 +54,11 @@ class ZAUser(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     totp_secret: Mapped[str] = mapped_column(Text, default="")  # base32 seed, vault-encrypted (v1.1)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # v1.1
+    # Which second factor is active, if any — "totp" (authenticator app, uses totp_secret/
+    # totp_enabled above) or "email" (OTP mailed on demand, no persistent secret needed).
+    # None means MFA is off. Kept separate from totp_enabled so email-OTP doesn't need to
+    # repurpose TOTP-specific columns.
+    mfa_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -228,6 +233,35 @@ class ZALoginAttempt(Base):
     fail_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ZAMailSettings(Base):
+    """Singleton mail-delivery config for MFA email OTPs (mirrors ZALogBackendConfig's
+    single-row pattern — services/inventory-service/app/models.py). Secrets
+    (smtp_password, graph_client_secret) are vault-encrypted, never returned
+    plaintext by the API (see api/mail_settings.py's masked-secret GET/PUT).
+    """
+
+    __tablename__ = "za_mail_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    provider: Mapped[str] = mapped_column(String(10), default="")  # "smtp" | "graph" | ""
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    from_address: Mapped[str] = mapped_column(String(320), default="")
+    from_name: Mapped[str] = mapped_column(String(200), default="")
+
+    smtp_host: Mapped[str] = mapped_column(String(255), default="")
+    smtp_port: Mapped[int] = mapped_column(Integer, default=587)
+    smtp_username: Mapped[str] = mapped_column(String(320), default="")
+    smtp_password: Mapped[str] = mapped_column(Text, default="")  # vault-encrypted
+    smtp_use_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    graph_tenant_id: Mapped[str] = mapped_column(String(100), default="")
+    graph_client_id: Mapped[str] = mapped_column(String(100), default="")
+    graph_client_secret: Mapped[str] = mapped_column(Text, default="")  # vault-encrypted
+    graph_sender_upn: Mapped[str] = mapped_column(String(320), default="")
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class ZASetting(Base):

@@ -30,6 +30,7 @@ async def create_session(
     idle_minutes: int,
     kiosk_host_id: str | None = None,
     pwc: bool = False,
+    mfa_pending: bool = False,
 ) -> str:
     """Mint a new session, seeded with a fresh created_at/last_seen_at. Initial
     TTL is the idle window — api-gateway slides it forward on every request,
@@ -44,6 +45,7 @@ async def create_session(
         "kiosk": bool(kiosk_host_id),
         "kiosk_host_id": kiosk_host_id,
         "pwc": pwc,
+        "mfa_pending": mfa_pending,
         "created_at": now,
         "last_seen_at": now,
     }

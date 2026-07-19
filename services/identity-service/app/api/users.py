@@ -164,6 +164,7 @@ async def _user_out(session: AsyncSession, user: ZAUser) -> UserOut:
         is_active=user.is_active,
         must_change_password=user.must_change_password,
         totp_enabled=user.totp_enabled,
+        mfa_method=user.mfa_method,
         created_at=user.created_at,
     )
 
@@ -379,6 +380,36 @@ async def delete_user(
         session, user_id=actor_id, username=actor_name or "", action="user.delete",
         resource_type="user", resource_id=user_id, details={"username": username},
     )
+
+
+@router.post("/users/{user_id}/mfa/reset", dependencies=[Depends(require_superadmin)])
+async def reset_user_mfa(
+    user_id: str,
+    session: AsyncSession = Depends(get_session),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    """Recovery path for a lost authenticator/mailbox: clears the target's MFA
+    enrollment entirely so they can re-enroll from scratch. require_superadmin
+    checks the literal X-User-Role header, which is safe here (not the vouched-role
+    bypass fixed elsewhere this session) because api-gateway's downstream_role()
+    only ever elevates a write up to "admin", never "superadmin" — so a genuine
+    X-User-Role: superadmin can only come from an actual superadmin session."""
+    result = await session.execute(select(ZAUser).where(ZAUser.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    user.totp_secret = ""
+    user.totp_enabled = False
+    user.mfa_method = None
+    await session.commit()
+
+    await log_action(
+        session, user_id=actor_id, username=actor_name or "", action="user.mfa_reset",
+        resource_type="user", resource_id=user_id, details={"username": user.username},
+    )
+    return {"mfa_method": None}
 
 
 @router.get("/users/groups", response_model=list[UserGroupOut])

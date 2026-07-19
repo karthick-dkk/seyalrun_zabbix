@@ -53,6 +53,12 @@
               <div style="display:flex;gap:8px;justify-content:flex-end">
                 <button class="btn-pill btn-pill-outline" @click="openEditUser(u)">✎ Edit</button>
                 <button
+                  v-if="auth.isSuperAdmin && u.mfa_method"
+                  class="btn-pill btn-pill-outline"
+                  title="Clear this user's MFA enrollment so they can re-enroll"
+                  @click="resetUserMfa(u)"
+                >⟲ Reset MFA</button>
+                <button
                   v-if="auth.isSuperAdmin && !u.zabbix_userid"
                   class="btn-pill btn-pill-outline"
                   style="color:var(--danger);border-color:var(--danger)"
@@ -432,6 +438,12 @@ async function deleteUser(u: any) {
   if (!await confirm(`Delete user "${u.username}"? This cannot be undone.`, { title: 'Delete User', danger: true, confirmLabel: 'Delete' })) return
   try { await api.delete(`/users/${u.id}`); await loadUsers() }
   catch (e: any) { alert(e?.response?.data?.detail || 'Failed to delete user') }
+}
+
+async function resetUserMfa(u: any) {
+  if (!await confirm(`Reset MFA for "${u.username}"? They will need to re-enroll from scratch.`, { title: 'Reset MFA', danger: true, confirmLabel: 'Reset MFA' })) return
+  try { await api.post(`/users/${u.id}/mfa/reset`); await loadUsers() }
+  catch (e: any) { alert(e?.response?.data?.detail || 'Failed to reset MFA') }
 }
 
 async function deleteGroup(g: any) {

@@ -408,6 +408,14 @@ async def gateway(path: str, request: Request):
                 detail="password change required: POST /api/v1/auth/change-password",
             )
 
+        # Login-time MFA gate: a session minted with MFA pending may ONLY verify
+        # its code, resend an email OTP, or probe nav — mirrors the pwc block above.
+        if identity.get("mfa_pending") and path not in ("auth/mfa/verify-login", "auth/mfa/resend", "auth/nav"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="MFA verification required: POST /api/v1/auth/mfa/verify-login",
+            )
+
         # Zero-trust: deny anything the caller's roles don't explicitly grant.
         if not rbac.is_authorized(identity.get("roles") or [identity.get("role", "user")], request.method, path):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden: your role does not permit this action")

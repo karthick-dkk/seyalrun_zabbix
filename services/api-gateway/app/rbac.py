@@ -18,6 +18,7 @@ import logging
 from libs.rbaccore import (
     BUILTIN_ROLE_PERMS,
     bypasses_authz,
+    doc_can_mfa,
     doc_can_reveal,
     merge_roles,
     primary_role as _primary_role,
@@ -62,8 +63,17 @@ def can_reveal(roles: list[str]) -> bool:
     return any(doc_can_reveal(_doc_for(r)) for r in roles)
 
 
+def can_use_mfa(roles: list[str]) -> bool:
+    return any(doc_can_mfa(_doc_for(r)) for r in roles)
+
+
 def is_authorized(roles: list[str], method: str, path: str) -> bool:
     seg = path.split("/", 1)[0]
+    # Enrolling in MFA needs the "mfa" capability flag even though the rest of
+    # auth/* (login, mfa/verify-login, change-password, ...) is unconditionally
+    # reachable below via _ALWAYS — this check must run BEFORE that shortcut.
+    if method == "POST" and path in ("auth/mfa/setup", "auth/mfa/setup-email"):
+        return can_use_mfa(roles)
     if seg in _ALWAYS:
         return True
     # Revealing a stored credential secret needs an explicit reveal capability.
@@ -105,6 +115,11 @@ _NAV_SEGMENTS: dict[str, tuple[str, str]] = {
     "admin.health": ("GET", "metrics"),
     "admin.housekeeping": ("GET", "housekeeping"),
     "admin.log-backend": ("GET", "log-backend"),
+    "admin.mail-settings": ("GET", "settings"),
+    # Not an admin page — read by SecurityView.vue (self-service, any authenticated
+    # user) to decide whether to offer MFA enrollment. Routes through the same
+    # can_use_mfa() special-case in is_authorized() as the real POST /auth/mfa/setup.
+    "security.mfa": ("POST", "auth/mfa/setup"),
     "admin.audit": ("GET", "audit"),
     "automation": ("GET", "job-templates"),
 }

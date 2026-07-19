@@ -42,6 +42,7 @@ class UserOut(BaseModel):
     role_ids: list[str] = []       # all role ids (for the assignment UI)
     is_active: bool
     totp_enabled: bool = False
+    mfa_method: str | None = None  # "totp" | "email" | None
     must_change_password: bool = False
     created_at: datetime
     # Server-asserted for this login only (session-scoped, not a DB attribute of
@@ -62,6 +63,11 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+    # Set when the minted session carries the mfa_pending claim — the token is
+    # usable ONLY for POST /auth/mfa/verify-login (+ auth/nav) until that's
+    # cleared (api-gateway enforces the allowlist; see main.py's mfa_pending block).
+    mfa_required: bool = False
+    mfa_method: str | None = None
 
 
 class UserCreate(BaseModel):

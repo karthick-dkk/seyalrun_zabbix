@@ -27,6 +27,7 @@ export interface SessionUser {
   // terminal deep-link; absent for every ordinary login.
   kiosk?: boolean
   kiosk_host_id?: string | null
+  mfa_method?: string | null
 }
 
 // Frontend mirror of the gateway RBAC matrix — used only to hide nav/tabs the
@@ -58,7 +59,9 @@ const AREA_ROLES: Record<string, string[]> = {
   'admin.health':           ['superadmin', 'admin', 'support'],
   'admin.housekeeping':     ['superadmin'],
   'admin.log-backend':      ['superadmin'],
+  'admin.mail-settings':    ['superadmin'],
   'admin.audit':            ['superadmin', 'admin'],
+  'security.mfa':           ['superadmin', 'admin'],
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -168,10 +171,16 @@ export const useAuthStore = defineStore('auth', {
     // kioskTarget: the raw zbx_host/host_id from a Zabbix terminal deep-link that
     // forced this login. It's only a hint — identity-service independently resolves
     // and validates it server-side before binding anything into the issued token.
+    // Returns { mfaRequired, mfaMethod } instead of resolving straight to a full
+    // session when the account has MFA enabled — the token is already applied
+    // (it's valid for verifyMfaLogin/resendMfaCode) but nav is deliberately NOT
+    // loaded yet, since api-gateway blocks every other path until verified.
     async login(username: string, password: string, kioskTarget?: string) {
       const { data } = await api.post('/auth/login', { username, password, kiosk_target: kioskTarget })
       this._applyToken(data.access_token, data.user)
+      if (data.mfa_required) return { mfaRequired: true, mfaMethod: data.mfa_method as string }
       await this.loadNav()
+      return { mfaRequired: false }
     },
 
     // Forced first-login rotation: the gateway 403s everything except this
@@ -185,7 +194,20 @@ export const useAuthStore = defineStore('auth', {
         kiosk_target: kioskTarget,
       })
       this._applyToken(data.access_token, data.user)
+      if (data.mfa_required) return { mfaRequired: true, mfaMethod: data.mfa_method as string }
       await this.loadNav()
+      return { mfaRequired: false }
+    },
+
+    // Completes the login-time MFA gate — mints a clean, fully-usable session.
+    async verifyMfaLogin(code: string) {
+      const { data } = await api.post('/auth/mfa/verify-login', { code })
+      this._applyToken(data.access_token, data.user)
+      await this.loadNav()
+    },
+
+    async resendMfaCode() {
+      await api.post('/auth/mfa/resend')
     },
 
     async exchangeSSO(ssoCode: string) {
