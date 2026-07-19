@@ -136,6 +136,10 @@ async def lookup_session(token: str) -> dict:
         # Login-time MFA gate: while set, main.py locks this session to
         # auth/mfa/verify-login (+ resend/nav) until the code is verified.
         "mfa_pending": bool(blob.get("mfa_pending", False)),
+        # Group-enforced MFA gate: no mfa_method yet, but a group requires one —
+        # while set, main.py locks this session to the enrollment endpoints
+        # (not verify-login, since there's no code to verify yet).
+        "mfa_setup_required": bool(blob.get("mfa_setup_required", False)),
         # Server-signed at login (see identity-service auth.py) — forwarded downstream
         # as X-Kiosk-Host-Id so terminal-service can enforce the single-host binding.
         # Never derived from anything client-controlled at this layer.

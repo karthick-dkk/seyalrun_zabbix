@@ -35,6 +35,11 @@ class ZAUserGroup(Base):
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     zabbix_usrgrpid: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Group-level policy doc (v1.2) — mirrors ZARole.permissions' JSON-doc convention so
+    # new policies don't need a new migration each time. Shape:
+    # {"mfa_enforced": bool, "setup_wizard": bool, "notifications_enabled": bool}.
+    # Absent/false for every key = today's behavior (no group policy applied).
+    policies: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     members: Mapped[list["ZAUserGroupMember"]] = relationship("ZAUserGroupMember", back_populates="group", lazy="select")
@@ -59,6 +64,15 @@ class ZAUser(Base):
     # None means MFA is off. Kept separate from totp_enabled so email-OTP doesn't need to
     # repurpose TOTP-specific columns.
     mfa_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # First-login "account setup" wizard (v1.2) — set True once a user has been through
+    # it (see api/auth.py's /auth/setup/complete). Existing users are backfilled to True
+    # at migration time (they're not "new"); only accounts created after this ships and
+    # who land in a setup_wizard-enabled group see it.
+    setup_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Optional per-account login IP allowlist (v1.2) — list[str] of CIDR strings (e.g.
+    # ["203.0.113.4/32"]). Empty list = unrestricted (today's behavior). Validated with
+    # ipaddress.ip_network, same approach already proven in api/internal.py::login_acls_check.
+    allowed_ips: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -93,6 +107,20 @@ class ZAGroupRole(Base):
 
     group_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_user_groups.id", ondelete="CASCADE"), primary_key=True)
     role_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_roles.id", ondelete="CASCADE"), primary_key=True)
+
+
+class ZAGroupNotifyConfig(Base):
+    """Per-group email alert routing (v1.2) — mirrors ZAMailSettings' get-or-create-row
+    pattern but keyed per group instead of singleton. On/off is controlled purely by the
+    parent group's policies.notifications_enabled flag; this row just holds where/how
+    much. Delivery reuses mailer.send_mail (SMTP/Graph) — no separate channel infra."""
+
+    __tablename__ = "za_group_notify_config"
+
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_user_groups.id", ondelete="CASCADE"), primary_key=True)
+    emails: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
+    min_severity: Mapped[str] = mapped_column(String(20), default="medium")  # info|medium|critical
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class ZASession(Base):

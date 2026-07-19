@@ -416,8 +416,27 @@ async def gateway(path: str, request: Request):
                 detail="MFA verification required: POST /api/v1/auth/mfa/verify-login",
             )
 
+        # Group-enforced MFA gate: the caller has no mfa_method yet but belongs to a
+        # group that requires one — locked to the enrollment endpoints (not
+        # verify-login, since there's no code to verify yet; enrollment IS the proof).
+        _mfa_enroll_paths = ("auth/mfa/setup", "auth/mfa/setup-email", "auth/mfa/enable", "auth/nav")
+        if identity.get("mfa_setup_required") and path not in _mfa_enroll_paths:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="your group requires MFA: POST /api/v1/auth/mfa/setup",
+            )
+
         # Zero-trust: deny anything the caller's roles don't explicitly grant.
-        if not rbac.is_authorized(identity.get("roles") or [identity.get("role", "user")], request.method, path):
+        # Exception: group-enforced MFA overrides the role-level "mfa" capability
+        # flag (rbac.is_authorized's special-case for these same 3 enrollment paths)
+        # — a user forced into MFA by their group may always enroll, regardless of
+        # whether their role separately carries the "mfa" flag.
+        _mfa_enforced_bypass = identity.get("mfa_setup_required") and path in (
+            "auth/mfa/setup", "auth/mfa/setup-email", "auth/mfa/enable",
+        )
+        if not _mfa_enforced_bypass and not rbac.is_authorized(
+            identity.get("roles") or [identity.get("role", "user")], request.method, path
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden: your role does not permit this action")
         # Preserve the caller's true (pre-elevation) primary role — downstream_role()
         # below can "vouch" a support/custom write up to X-User-Role: admin (see its

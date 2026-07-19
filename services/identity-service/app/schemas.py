@@ -68,6 +68,9 @@ class TokenResponse(BaseModel):
     # cleared (api-gateway enforces the allowlist; see main.py's mfa_pending block).
     mfa_required: bool = False
     mfa_method: str | None = None
+    # Group-enforced: no mfa_method yet, but a group requires one — distinct from
+    # mfa_required (which means "already enrolled, verify a code this session").
+    mfa_setup_required: bool = False
 
 
 class UserCreate(BaseModel):
@@ -121,6 +124,7 @@ class UserGroupOut(BaseModel):
     name: str
     description: str
     zabbix_usrgrpid: str | None = None
+    policies: dict = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -130,6 +134,17 @@ class GroupMembersUpdate(BaseModel):
 
 class GroupRolesUpdate(BaseModel):
     role_ids: list[str]
+
+
+class GroupPoliciesUpdate(BaseModel):
+    mfa_enforced: bool = False
+    setup_wizard: bool = False
+    notifications_enabled: bool = False
+
+
+class GroupNotifyConfigUpdate(BaseModel):
+    emails: list[str] = Field(default_factory=list)
+    min_severity: str = "medium"  # info | medium | critical
 
 
 class AuthorizationCreate(BaseModel):

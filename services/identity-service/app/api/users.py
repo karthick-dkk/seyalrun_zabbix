@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..audit import log_action
 from ..database import get_session
 from ..deps import require_admin, require_service_token, require_superadmin
-from ..models import ZAGroupRole, ZARole, ZAUser, ZAUserGroup, ZAUserGroupMember, ZAUserRole
+from ..models import ZAGroupNotifyConfig, ZAGroupRole, ZARole, ZAUser, ZAUserGroup, ZAUserGroupMember, ZAUserRole
 from ..schemas import (
     GroupMembersUpdate,
+    GroupNotifyConfigUpdate,
+    GroupPoliciesUpdate,
     RoleCreate,
     RoleOut,
     RoleUpdate,
@@ -91,6 +93,15 @@ def _guard_grants_allpower(permissions: dict | None, actor_role: str) -> None:
                             detail="only a superadmin may create/grant an all-access or reveal-capable role")
 
 
+def _guard_group_mfa_enforce(mfa_enforced: bool, actor_role: str) -> None:
+    """Turning on group-level MFA enforcement requires superadmin — same sensitivity
+    tier as reveal/all-access role grants (it forces every member into MFA and, per
+    the group-enforcement design, bypasses their role's own "mfa" capability flag)."""
+    if mfa_enforced and actor_role != "superadmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="only a superadmin may enforce MFA for a group")
+
+
 @router.get("/users/groups/{group_id}/roles")
 async def get_group_roles(group_id: str, session: AsyncSession = Depends(get_session)):
     rows = await session.execute(select(ZAGroupRole.role_id).where(ZAGroupRole.group_id == group_id))
@@ -126,6 +137,77 @@ async def set_group_roles(
     await log_action(session, user_id=actor_id, username=actor_name or "", action="group.roles.set",
                      resource_type="user-group", resource_id=group_id, details={"role_ids": payload.role_ids})
     return {"group_id": group_id, "role_ids": payload.role_ids}
+
+
+@router.put("/users/groups/{group_id}/policies", response_model=UserGroupOut, dependencies=[Depends(require_admin)])
+async def set_group_policies(
+    group_id: str,
+    payload: GroupPoliciesUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor_role: str = Header(default="user", alias="X-User-Role"),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    """mfa_enforced may only be turned ON by a genuine superadmin (see
+    _guard_group_mfa_enforce); setup_wizard/notifications_enabled stay
+    admin-gated like the rest of group management."""
+    result = await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))
+    group = result.scalar_one_or_none()
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+
+    _guard_group_mfa_enforce(payload.mfa_enforced, actor_role)
+
+    group.policies = {
+        "mfa_enforced": payload.mfa_enforced,
+        "setup_wizard": payload.setup_wizard,
+        "notifications_enabled": payload.notifications_enabled,
+    }
+    await session.commit()
+    await session.refresh(group)
+
+    await log_action(session, user_id=actor_id, username=actor_name or "", action="group.policies.set",
+                     resource_type="user-group", resource_id=group_id, details=group.policies)
+    return group
+
+
+async def _get_or_create_notify_config(session: AsyncSession, group_id: str) -> ZAGroupNotifyConfig:
+    result = await session.execute(select(ZAGroupNotifyConfig).where(ZAGroupNotifyConfig.group_id == group_id))
+    cfg = result.scalar_one_or_none()
+    if cfg is None:
+        cfg = ZAGroupNotifyConfig(group_id=group_id, emails=[], min_severity="medium")
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
+    return cfg
+
+
+@router.get("/users/groups/{group_id}/notify-config", dependencies=[Depends(require_admin)])
+async def get_group_notify_config(group_id: str, session: AsyncSession = Depends(get_session)):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_notify_config(session, group_id)
+    return {"emails": cfg.emails, "min_severity": cfg.min_severity}
+
+
+@router.put("/users/groups/{group_id}/notify-config", dependencies=[Depends(require_admin)])
+async def put_group_notify_config(
+    group_id: str,
+    payload: GroupNotifyConfigUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_notify_config(session, group_id)
+    cfg.emails = payload.emails
+    cfg.min_severity = payload.min_severity
+    await session.commit()
+    await log_action(session, user_id=actor_id, username=actor_name or "", action="group.notify_config.set",
+                     resource_type="user-group", resource_id=group_id,
+                     details={"emails": payload.emails, "min_severity": payload.min_severity})
+    return {"emails": cfg.emails, "min_severity": cfg.min_severity}
 
 
 async def _user_roles(session: AsyncSession, user_id: str) -> tuple[list[str], list[str]]:

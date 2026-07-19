@@ -210,6 +210,13 @@ export const useAuthStore = defineStore('auth', {
       await api.post('/auth/mfa/resend')
     },
 
+    // /auth/mfa/enable now always re-mints a clean session (see auth.py) — matters
+    // for the group-enforced enrollment path, harmless for voluntary self-service
+    // enrollment. Callers (SecurityView.vue) apply the returned token via this.
+    applyMfaEnableResult(accessToken: string, user: SessionUser) {
+      this._applyToken(accessToken, user)
+    },
+
     // Zabbix SSO is a parallel credential path, not exempt from a user's own MFA
     // setting — same mfa_required shape as login()/changePassword().
     async exchangeSSO(ssoCode: string) {

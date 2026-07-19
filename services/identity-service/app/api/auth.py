@@ -163,13 +163,27 @@ async def _consume_otp(user_id: str, code: str, purpose: str) -> None:
 async def _mint_session(
     session: AsyncSession, user: ZAUser, roles: list[str], primary: str, settings,
     *, kiosk_host_id: str | None = None, pwc: bool = False,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, bool]:
     """The ONE place every login path (password, SSO, post-password-change
     re-mint) goes through to turn a resolved identity into a session — so the
     mfa_pending claim can never be forgotten on one path while being enforced
     on another. Mirrors create_session's pwc handling: mint immediately with
-    the restrictive claim set, rather than withholding the session."""
+    the restrictive claim set, rather than withholding the session.
+
+    mfa_setup_required is the group-enforced sibling of mfa_pending: the user
+    has NO mfa_method yet, but belongs to a group with policies.mfa_enforced —
+    they must complete enrollment (not just verify a code) before anything
+    else. Group enforcement is checked only when the user isn't already on
+    the mfa_pending path (verifying an existing enrollment already satisfies
+    any group's requirement)."""
+    from ..grouppolicy import effective_group_policies
+
     mfa_pending = bool(user.mfa_method)
+    mfa_setup_required = False
+    if not mfa_pending:
+        policies = await effective_group_policies(session, user.id)
+        mfa_setup_required = bool(policies.get("mfa_enforced"))
+
     token = await create_session(
         redis_client,
         user_id=user.id, username=user.username, role=primary, roles=roles,
@@ -177,10 +191,11 @@ async def _mint_session(
         kiosk_host_id=kiosk_host_id,
         pwc=pwc,
         mfa_pending=mfa_pending,
+        mfa_setup_required=mfa_setup_required,
     )
     if mfa_pending and user.mfa_method == "email":
         await _issue_otp(user, session, "login")
-    return token, mfa_pending
+    return token, mfa_pending, mfa_setup_required
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -219,7 +234,7 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
 
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     kiosk_host_id = await _resolve_kiosk_host(payload.kiosk_target, settings)
-    token, mfa_pending = await _mint_session(
+    token, mfa_pending, mfa_setup_required = await _mint_session(
         session, user, roles, primary, settings,
         kiosk_host_id=kiosk_host_id, pwc=user.must_change_password,
     )
@@ -228,7 +243,7 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
         session,
         user_id=user.id,
         username=user.username,
-        action="login" if not mfa_pending else "login_mfa_pending",
+        action="login" if not (mfa_pending or mfa_setup_required) else "login_mfa_pending",
         resource_type="session",
         ip_address=request.client.host if request.client else "",
     )
@@ -236,6 +251,7 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
     return TokenResponse(
         access_token=token, user=await _user_out(session, user, kiosk_host_id),
         mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
+        mfa_setup_required=mfa_setup_required,
     )
 
 
@@ -267,9 +283,10 @@ async def change_password(
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     kiosk_host_id = await _resolve_kiosk_host(payload.kiosk_target, settings)
-    # A forced-password-change user may ALSO have MFA enabled — re-mint through
-    # the same helper as /login so the mfa_pending claim isn't dropped on this path.
-    token, mfa_pending = await _mint_session(session, user, roles, primary, settings, kiosk_host_id=kiosk_host_id)
+    # A forced-password-change user may ALSO have MFA enabled/enforced — re-mint through
+    # the same helper as /login so the mfa_pending/mfa_setup_required claim isn't dropped
+    # on this path.
+    token, mfa_pending, mfa_setup_required = await _mint_session(session, user, roles, primary, settings, kiosk_host_id=kiosk_host_id)
 
     await log_action(
         session, user_id=user.id, username=user.username, action="password_change",
@@ -279,6 +296,7 @@ async def change_password(
     return TokenResponse(
         access_token=token, user=await _user_out(session, user, kiosk_host_id),
         mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
+        mfa_setup_required=mfa_setup_required,
     )
 
 
@@ -335,16 +353,17 @@ async def sso_exchange(payload: SSOExchangeRequest, session: AsyncSession = Depe
     # session), so a user who enabled MFA specifically to require a second factor
     # was still fully bypassable through this endpoint. Mirrors the pwc handling
     # immediately above, which already went through _mint_session for this reason.
-    token, mfa_pending = await _mint_session(session, user, roles, primary, settings, pwc=user.must_change_password)
+    token, mfa_pending, mfa_setup_required = await _mint_session(session, user, roles, primary, settings, pwc=user.must_change_password)
 
     await log_action(
         session, user_id=user.id, username=user.username,
-        action="login_sso" if not mfa_pending else "login_sso_mfa_pending", resource_type="session",
+        action="login_sso" if not (mfa_pending or mfa_setup_required) else "login_sso_mfa_pending", resource_type="session",
     )
 
     return TokenResponse(
         access_token=token, user=await _user_out(session, user),
         mfa_required=mfa_pending, mfa_method=user.mfa_method if mfa_pending else None,
+        mfa_setup_required=mfa_setup_required,
     )
 
 
@@ -420,12 +439,19 @@ async def mfa_setup_email(
     return {"sent": True}
 
 
-@router.post("/mfa/enable")
+@router.post("/mfa/enable", response_model=TokenResponse)
 async def mfa_enable(
     payload: MfaCodeRequest,
     session: AsyncSession = Depends(get_session),
     x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ):
+    """Enrollment itself is the proof of possession — no separate verify-login
+    round trip needed right after. Always re-mints a clean session (mfa_pending=
+    False, mfa_setup_required=False explicitly, not via _mint_session's automatic
+    recompute, which would immediately flip mfa_pending back to True now that
+    mfa_method is set). Harmless/idempotent for the pre-existing voluntary
+    self-service enrollment case (that session was never gated to begin with);
+    essential for the new group-enforced case, where this is what clears the gate."""
     import pyotp
     from ..vault import decrypt
 
@@ -447,7 +473,15 @@ async def mfa_enable(
     await session.commit()
     await log_action(session, user_id=user.id, username=user.username, action="mfa.enable",
                      resource_type="user", details={"method": user.mfa_method})
-    return {"enabled": True, "method": user.mfa_method}
+
+    settings = get_settings()
+    roles, primary = await _resolve_roles(session, user.id, user.role_id)
+    token = await create_session(
+        redis_client,
+        user_id=user.id, username=user.username, role=primary, roles=roles,
+        idle_minutes=settings.session_idle_minutes,
+    )
+    return TokenResponse(access_token=token, user=await _user_out(session, user))
 
 
 @router.post("/mfa/disable/request-code")
