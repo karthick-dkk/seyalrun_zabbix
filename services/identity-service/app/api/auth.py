@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import secrets
 import time
@@ -102,6 +103,7 @@ async def _user_out(session: AsyncSession, user: ZAUser, kiosk_host_id: str | No
         is_active=user.is_active,
         totp_enabled=user.totp_enabled,
         mfa_method=user.mfa_method,
+        allowed_ips=user.allowed_ips or [],
         must_change_password=user.must_change_password,
         created_at=user.created_at,
         kiosk=bool(kiosk_host_id),
@@ -201,12 +203,51 @@ async def _mint_session(
     return token, mfa_pending, mfa_setup_required, needs_setup_wizard
 
 
+def _client_ip(request: Request) -> str:
+    """The real browser IP, not the raw TCP peer. identity-service sits two hops
+    behind the actual client (browser -> edge-proxy -> api-gateway -> here), so
+    request.client.host is always api-gateway's own container IP — confirmed
+    live (an external login attempt recorded a 172.18.x.x docker-network address
+    in the audit log, not the real caller). edge-proxy sets X-Real-IP via nginx's
+    `proxy_set_header X-Real-IP $remote_addr` (services/edge-proxy/templates/
+    default.conf.template) — REPLACED, not appended, so it can't be spoofed by
+    a client-supplied header the way X-Forwarded-For's accumulating list could
+    be. api-gateway's proxy.py forwards it through unchanged (not in its
+    hop-by-hop strip list). Falls back to the raw peer for direct/non-proxied
+    calls (e.g. tests hitting identity-service directly)."""
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else ""
+
+
+def _ip_allowed(allowed_ips: list[str], client_ip: str) -> bool:
+    """Empty allowlist = unrestricted (default). A malformed CIDR entry is
+    skipped rather than raising, so one bad entry can't lock every login out;
+    a malformed/unresolvable client_ip fails closed (denied), not open."""
+    if not allowed_ips:
+        return True
+    if not client_ip:
+        return False
+    try:
+        addr = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return False
+    for cidr in allowed_ips:
+        try:
+            if addr in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, request: Request, session: AsyncSession = Depends(get_session)):
     from .._lockout import attempt_key, check_locked, clear, record_failure
 
     settings = get_settings()
-    ip = request.client.host if request.client else ""
+    ip = _client_ip(request)
     key = attempt_key(payload.username, ip)
 
     locked_for = await check_locked(session, key)
@@ -235,6 +276,17 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
     result = await session.execute(select(ZAUser).where(ZAUser.id == identity["id"]))
     user = result.scalar_one()
 
+    # Checked AFTER password validation (not before) — a failed-password attempt
+    # from a disallowed IP still counts toward lockout exactly as it does today,
+    # so this reveals no extra information about IP policy to an attacker who
+    # hasn't already proven they know a valid password.
+    if not _ip_allowed(user.allowed_ips or [], ip):
+        await log_action(
+            session, user_id=user.id, username=user.username, action="login_denied_ip",
+            resource_type="session", ip_address=ip,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="login not permitted from this IP")
+
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
     kiosk_host_id = await _resolve_kiosk_host(payload.kiosk_target, settings)
     token, mfa_pending, mfa_setup_required, needs_setup_wizard = await _mint_session(
@@ -248,7 +300,7 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
         username=user.username,
         action="login" if not (mfa_pending or mfa_setup_required) else "login_mfa_pending",
         resource_type="session",
-        ip_address=request.client.host if request.client else "",
+        ip_address=ip,
     )
 
     return TokenResponse(
@@ -293,7 +345,7 @@ async def change_password(
 
     await log_action(
         session, user_id=user.id, username=user.username, action="password_change",
-        resource_type="user", ip_address=request.client.host if request.client else "",
+        resource_type="user", ip_address=_client_ip(request),
     )
 
     return TokenResponse(
@@ -341,13 +393,24 @@ async def zbx_sso_init(request: Request):
 
 
 @router.post("/sso-exchange", response_model=TokenResponse)
-async def sso_exchange(payload: SSOExchangeRequest, session: AsyncSession = Depends(get_session)):
+async def sso_exchange(payload: SSOExchangeRequest, request: Request, session: AsyncSession = Depends(get_session)):
     identity = await _zabbix_sso.authenticate(session=session, sso_code=payload.sso_code)
     if identity is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid or expired sso_code")
 
     result = await session.execute(select(ZAUser).where(ZAUser.id == identity["id"]))
     user = result.scalar_one()
+
+    # Same IP policy as /login — SSO is a parallel credential path (already fixed
+    # for the equivalent MFA-bypass gap this session), so it must honor a user's
+    # allowed_ips restriction too, not just password login.
+    ip = _client_ip(request)
+    if not _ip_allowed(user.allowed_ips or [], ip):
+        await log_action(
+            session, user_id=user.id, username=user.username, action="login_denied_ip",
+            resource_type="session", ip_address=ip,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="login not permitted from this IP")
 
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
@@ -360,7 +423,8 @@ async def sso_exchange(payload: SSOExchangeRequest, session: AsyncSession = Depe
 
     await log_action(
         session, user_id=user.id, username=user.username,
-        action="login_sso" if not (mfa_pending or mfa_setup_required) else "login_sso_mfa_pending", resource_type="session",
+        action="login_sso" if not (mfa_pending or mfa_setup_required) else "login_sso_mfa_pending",
+        resource_type="session", ip_address=ip,
     )
 
     return TokenResponse(

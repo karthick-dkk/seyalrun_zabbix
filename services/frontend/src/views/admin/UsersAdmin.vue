@@ -258,6 +258,10 @@
             <button :class="['fp-toggle', !userForm.is_active && 'active']" @click="userForm.is_active = false">Disabled</button>
           </div>
         </div>
+        <div v-if="editingUser" class="fp-field">
+          <label class="fp-label">Allowed login IPs <span class="fp-opt">(CIDR, one per line — blank = unrestricted)</span></label>
+          <textarea v-model="userForm.allowed_ips_text" class="fp-input" rows="2" placeholder="203.0.113.4/32" style="resize:vertical;font-family:inherit"></textarea>
+        </div>
 
         <!-- Groups assignment -->
         <div class="fp-section-head">Group Memberships</div>
@@ -490,7 +494,7 @@ async function deleteGroup(g: any) {
 const showUserPanel = ref(false)
 const editingUser = ref<any>(null)
 const activeUserId = ref<string | null>(null)
-const userForm = reactive({ username: '', display_name: '', email: '', password: '', role_ids: [] as string[], is_active: true })
+const userForm = reactive({ username: '', display_name: '', email: '', password: '', role_ids: [] as string[], is_active: true, allowed_ips_text: '' })
 const userGroupsPicker = ref<PickerItem[]>([])
 const userError = ref('')
 const savingUser = ref(false)
@@ -498,7 +502,7 @@ const savingUser = ref(false)
 function openCreateUser() {
   editingUser.value = null
   activeUserId.value = null
-  Object.assign(userForm, { username: '', display_name: '', email: '', password: '', role_ids: [], is_active: true })
+  Object.assign(userForm, { username: '', display_name: '', email: '', password: '', role_ids: [], is_active: true, allowed_ips_text: '' })
   userGroupsPicker.value = []
   userError.value = ''
   showUserPanel.value = true
@@ -510,6 +514,7 @@ function openEditUser(u: any) {
   Object.assign(userForm, {
     username: u.username, display_name: u.display_name || '', email: u.email || '',
     password: '', role_ids: [...(u.role_ids || (u.role_id ? [u.role_id] : []))], is_active: u.is_active,
+    allowed_ips_text: (u.allowed_ips || []).join('\n'),
   })
   // Pre-fill group memberships
   userGroupsPicker.value = groups.value
@@ -532,6 +537,7 @@ async function saveUser() {
         email: userForm.email,
         role_ids: userForm.role_ids,
         is_active: userForm.is_active,
+        allowed_ips: userForm.allowed_ips_text.split('\n').map(s => s.trim()).filter(Boolean),
       }
       if (userForm.password) payload.password = userForm.password
       await api.put(`/users/${userId}`, payload)

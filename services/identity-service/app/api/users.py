@@ -251,6 +251,7 @@ async def _user_out(session: AsyncSession, user: ZAUser) -> UserOut:
         must_change_password=user.must_change_password,
         totp_enabled=user.totp_enabled,
         mfa_method=user.mfa_method,
+        allowed_ips=user.allowed_ips or [],
         created_at=user.created_at,
     )
 
@@ -408,6 +409,8 @@ async def update_user(
         user.is_active = payload.is_active
     if payload.password:
         user.password_hash = hash_password(payload.password)
+    if payload.allowed_ips is not None:
+        user.allowed_ips = payload.allowed_ips
 
     # Guard before commit: a role change or deactivation must not zero the superadmins.
     await session.flush()

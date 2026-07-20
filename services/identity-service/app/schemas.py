@@ -43,6 +43,7 @@ class UserOut(BaseModel):
     is_active: bool
     totp_enabled: bool = False
     mfa_method: str | None = None  # "totp" | "email" | None
+    allowed_ips: list[str] = Field(default_factory=list)  # CIDR list; empty = unrestricted
     must_change_password: bool = False
     created_at: datetime
     # Server-asserted for this login only (session-scoped, not a DB attribute of
@@ -92,6 +93,7 @@ class UserUpdate(BaseModel):
     role_id: str | None = None
     role_ids: list[str] | None = None   # v1.1 multi-role assignment
     is_active: bool | None = None
+    allowed_ips: list[str] | None = None  # CIDR list; None = unchanged, [] = clear
 
 
 class RoleOut(BaseModel):
