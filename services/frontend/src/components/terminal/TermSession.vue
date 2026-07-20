@@ -73,7 +73,10 @@ import { reactive, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { wsUrl } from '@/api/client'
+import { useCapturesStore } from '@/stores/captures'
 import '@xterm/xterm/css/xterm.css'
+
+const captures = useCapturesStore()
 
 const props = defineProps<{
   sessionId: string
@@ -377,8 +380,25 @@ function snip() {
   ctx.fillStyle = '#1a1b1e'
   ctx.fillRect(0, 0, w, h)
   for (const c of canvases) ctx.drawImage(c, 0, 0)
-  composite.toBlob(blob => {
-    if (!blob) return
+
+  // canvas.toBlob is always async, but navigator.clipboard.write() requires a
+  // user-activation context — by the time toBlob's callback fires, that
+  // activation window has already closed in most browsers, so a plain
+  // `.then(blob => clipboard.write(...))` silently fails (caught and
+  // swallowed, which is why capture-then-paste showed nothing). The fix: the
+  // Clipboard API spec explicitly allows a ClipboardItem's value to be a
+  // Promise<Blob> for exactly this case — constructing the ClipboardItem (and
+  // calling write()) SYNCHRONOUSLY, right here in the click handler, keeps us
+  // inside the activation window even though the blob itself resolves later.
+  const blobPromise = new Promise<Blob>((resolve, reject) => {
+    composite.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
+  })
+
+  if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]).catch(() => {})
+  }
+
+  blobPromise.then((blob) => {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -387,8 +407,16 @@ function snip() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-    navigator.clipboard?.write?.([new ClipboardItem({ 'image/png': blob })]).catch(() => {})
-  }, 'image/png')
+
+    // Also drop it in the captures tray (topbar bell) — expires after an hour,
+    // and can be re-copied from there even if the first clipboard write above
+    // didn't land (e.g. an older browser without the Promise<Blob> support).
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') captures.add(reader.result, props.sessionId.slice(0, 8))
+    }
+    reader.readAsDataURL(blob)
+  }).catch(() => {})
 }
 
 defineExpose({

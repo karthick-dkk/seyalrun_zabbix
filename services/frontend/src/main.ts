@@ -11,7 +11,16 @@ const app = createApp(App)
 app.use(createPinia())
 app.use(router)
 
-app.mount('#app')
+// Wait for the router's initial navigation (including its async beforeEach guard)
+// to fully resolve before mounting. Without this, a brand-new tab opened via the
+// _session URL-fragment handoff (see router/index.ts and api/client.ts::terminalUrl)
+// races: App.vue's own onMounted also calls auth.init(), and if THAT fires first —
+// before the guard has set the handed-off token — its unauthenticated /auth/session
+// request fails and clearToken()s the token the guard sets moments later, bouncing
+// the new tab to the login screen instead of picking up the existing session.
+router.isReady().then(() => {
+  app.mount('#app')
+})
 
 // Chrome/Edge steal the mouse wheel on a focused <input type="number"> to
 // step its value instead of scrolling the page — feels like "scroll is

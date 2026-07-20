@@ -84,6 +84,20 @@
           </button>
           <div v-if="showNotifDropdown" class="notif-backdrop" @click="showNotifDropdown = false" />
           <div v-if="showNotifDropdown" class="notif-dropdown">
+            <template v-if="capturesStore.active.length">
+              <div class="notif-dropdown-header">
+                <span>Screen Captures <span class="notif-capture-hint">(expire after 1h)</span></span>
+              </div>
+              <div v-for="c in capturesStore.active" :key="c.id" class="notif-capture-item">
+                <img :src="c.dataUrl" class="notif-capture-thumb" :alt="`Capture from ${c.label}`" />
+                <div class="notif-capture-body">
+                  <div class="notif-item-title">Terminal {{ c.label }}</div>
+                  <div class="notif-item-time">{{ timeAgo(new Date(c.createdAt).toISOString()) }}</div>
+                  <button type="button" class="notif-capture-copy" @click="copyCapture(c.id)">{{ copiedCaptureId === c.id ? '✓ Copied' : '⧉ Copy' }}</button>
+                </div>
+                <button type="button" class="notif-dismiss" title="Dismiss" @click.stop="capturesStore.remove(c.id)">×</button>
+              </div>
+            </template>
             <div class="notif-dropdown-header">
               <span>Notifications</span>
               <button type="button" class="notif-mark-all" @click="notifStore.markAllRead()" :disabled="!notifStore.unreadCount">Mark all read</button>
@@ -137,6 +151,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
+import { useCapturesStore } from '@/stores/captures'
 import api, { terminalUrl } from '@/api/client'
 import { theme, toggleTheme } from '@/theme'
 
@@ -144,6 +159,16 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 const notifStore = useNotificationsStore()
+const capturesStore = useCapturesStore()
+const copiedCaptureId = ref<string | null>(null)
+
+async function copyCapture(id: string) {
+  const ok = await capturesStore.copy(id)
+  if (ok) {
+    copiedCaptureId.value = id
+    setTimeout(() => { if (copiedCaptureId.value === id) copiedCaptureId.value = null }, 1500)
+  }
+}
 
 // ── SF Symbol-style SVG icon set (24×24, stroke-based, Apple thin-line aesthetic) ──
 function _svg(body: string): string {
@@ -187,7 +212,6 @@ const ADMIN_GROUPS = [
   ] },
   { label: 'Inventory', tabs: [
     { area: 'admin.credentials', to: '/admin/credentials', label: 'Credentials', icon: ICONS.key },
-    { area: 'admin.zones', to: '/admin/zones', label: 'Zones', icon: ICONS.globe },
   ] },
   { label: 'Automation', tabs: [
     { area: 'admin.zabbix-integration', to: '/admin/trigger-bindings', label: 'Trigger Bindings', icon: ICONS.bolt },
@@ -353,6 +377,12 @@ function openTerminal() {
 .notif-item-time { font-size: 10.5px; color: var(--text2); margin-top: 3px; }
 .notif-dismiss { background: none; border: none; color: var(--text2); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; flex-shrink: 0; }
 .notif-dismiss:hover { color: var(--danger); }
+.notif-capture-hint { font-size: 10.5px; font-weight: 400; color: var(--text2); }
+.notif-capture-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.notif-capture-thumb { width: 56px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); background: #1a1b1e; flex-shrink: 0; }
+.notif-capture-body { flex: 1; min-width: 0; }
+.notif-capture-copy { margin-top: 3px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--accent2); font-size: 10.5px; padding: 2px 6px; cursor: pointer; }
+.notif-capture-copy:hover { border-color: var(--accent2); }
 .notif-dropdown-footer {
   display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--border);
   position: sticky; bottom: 0; background: var(--bg2);
