@@ -18,7 +18,10 @@ function onGlobalEsc(e: KeyboardEvent) {
 }
 
 onMounted(() => {
-  auth.init()
+  // main.ts now awaits router.isReady() before mounting, so the router's own
+  // beforeEach guard (including the _session handoff) has already resolved
+  // auth state by the time this fires — skip the redundant /auth/session call.
+  if (!auth.ready) auth.init()
   window.addEventListener('keydown', onGlobalEsc)
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalEsc))

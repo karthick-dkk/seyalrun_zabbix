@@ -62,7 +62,6 @@
               <th v-if="auth.isAdminOrSupport" class="th-center">Users</th>
               <th v-if="auth.isAdminOrSupport" class="th-center">Credentials</th>
               <th>Status</th>
-              <th v-if="quickTemplates.length">Automation</th>
               <th v-if="auth.isAdminOrSupport"></th>
             </tr>
           </thead>
@@ -122,11 +121,6 @@
               <td>
                 <span v-if="h.enabled" class="status-ok">Active</span>
                 <span v-else class="status-off">Inactive</span>
-              </td>
-              <td v-if="quickTemplates.length">
-                <div style="display:flex;gap:6px;flex-wrap:wrap">
-                  <button v-for="t in quickTemplates" :key="t.id" class="btn-pill btn-pill-outline" style="font-size:11px" @click="runQuickAction(t, h)">▶ {{ t.name }}</button>
-                </div>
               </td>
               <td v-if="auth.isAdminOrSupport">
                 <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -1310,7 +1304,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleEsc))
 .act-check input { accent-color: var(--accent2); cursor: pointer; }
 
 /* ── Asset form section label ───────────────────────────────────────────── */
-.asset-form-section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #8b949e; margin-bottom: 8px; }
+.asset-form-section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text2); margin-bottom: 8px; }
 
 /* ── User check items ───────────────────────────────────────────────────── */
 .user-check-item {

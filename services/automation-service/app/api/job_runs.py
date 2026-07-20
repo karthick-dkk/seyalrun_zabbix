@@ -7,17 +7,28 @@ from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app._params import template_code_params
 from app.database import get_session, SessionLocal
-from app.deps import require_service_token, get_user_id, get_user_role
+from app.deps import require_service_token, get_user_id, get_user_role, get_user_real_role
 from app.models import ZAJobRun, ZAJobTemplate
 from app.config import get_settings
 from app.runner import get_redis
 
-_TERMINAL = {"success", "failed", "error", "cancelled"}
+_TERMINAL = {"success", "failed", "error", "cancelled", "rejected"}
+
+
+def _can_approve(role: str, approver_role: str | None) -> bool:
+    """'admin' (the default) means admin-or-above; 'superadmin' means superadmin only —
+    the same two-tier admin/superadmin hierarchy every other admin-gated endpoint in
+    this codebase already assumes (see housekeeping.py's _require_admin)."""
+    required = approver_role or "admin"
+    if required == "superadmin":
+        return role == "superadmin"
+    return role in ("admin", "superadmin")
 
 router = APIRouter(dependencies=[Depends(require_service_token)])
 
@@ -26,6 +37,7 @@ router = APIRouter(dependencies=[Depends(require_service_token)])
 async def list_runs(
     job_template_id: str | None = None,
     status: str | None = None,
+    parent_run_id: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     q = select(ZAJobRun)
@@ -33,6 +45,8 @@ async def list_runs(
         q = q.where(ZAJobRun.job_template_id == job_template_id)
     if status:
         q = q.where(ZAJobRun.status == status)
+    if parent_run_id:
+        q = q.where(ZAJobRun.parent_run_id == parent_run_id)
     q = q.order_by(ZAJobRun.started_at.desc()).limit(200)
     result = await session.execute(q)
     runs = result.scalars().all()
@@ -94,6 +108,12 @@ async def rerun(
     targets = params.get("_target_host_ids") or list(tmpl.target_host_ids or [])
 
     new_id = str(uuid.uuid4())
+    # _run_id must point at THIS new run, not the original — it's how a chain
+    # template's ChainExecutor links each step's child run back to its parent
+    # (see chain.py). Everything else in params (chain_steps, credential
+    # selection, etc.) replays unchanged.
+    if params.get("_run_id"):
+        params["_run_id"] = new_id
     new_run = ZAJobRun(
         id=new_id, job_template_id=tmpl.id, triggered_by=f"user:{user_id}",
         status="pending", params=params, output_lines=[],
@@ -120,8 +140,86 @@ async def rerun(
         params={**params, **template_code_params(tmpl)},
         triggered_by=f"user:{user_id}",
     )
-    asyncio.create_task(_runner.execute(new_id, executor, req))
+    asyncio.create_task(_runner.execute(
+        new_id, executor, req, timeout_seconds=tmpl.timeout_seconds, template_name=tmpl.name,
+        retry_count=tmpl.retry_count, retry_delay_seconds=tmpl.retry_delay_seconds,
+    ))
     return {"run_id": new_id}
+
+
+@router.post("/job-runs/{run_id}/approve", status_code=status.HTTP_202_ACCEPTED)
+async def approve_run(
+    run_id: str,
+    request: Request,
+    role: str = Depends(get_user_real_role),
+    session: AsyncSession = Depends(get_session),
+):
+    run = await session.get(ZAJobRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404)
+    if run.status != "pending_approval":
+        raise HTTPException(status_code=400, detail="run is not pending approval")
+    tmpl = await session.get(ZAJobTemplate, run.job_template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=400, detail="job template no longer exists")
+    if not _can_approve(role, tmpl.approver_role):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role to approve this run")
+
+    run.status = "pending"
+    await session.commit()
+
+    executors = getattr(request.app.state, "executors", {})
+    executor = executors.get(tmpl.action_type)
+    if executor is None:
+        raise HTTPException(status_code=400, detail=f"no executor for action_type={tmpl.action_type}")
+
+    from libs.pluginbase import RunRequest
+    from app import runner as _runner
+
+    params = dict(run.params or {})
+    target_host_ids = params.get("_target_host_ids") or list(tmpl.target_host_ids or [])
+    req = RunRequest(
+        action_type=tmpl.action_type,
+        target_host_ids=target_host_ids,
+        credential_id=params.get("_credential_id", tmpl.credential_id),
+        params={**params, **template_code_params(tmpl)},
+        triggered_by=run.triggered_by,
+    )
+    asyncio.create_task(_runner.execute(
+        run_id, executor, req, timeout_seconds=tmpl.timeout_seconds, template_name=tmpl.name,
+        retry_count=tmpl.retry_count, retry_delay_seconds=tmpl.retry_delay_seconds,
+    ))
+    return {"run_id": run_id, "status": "pending"}
+
+
+class RejectPayload(BaseModel):
+    reason: str = ""
+
+
+@router.post("/job-runs/{run_id}/reject")
+async def reject_run(
+    run_id: str,
+    payload: RejectPayload,
+    role: str = Depends(get_user_real_role),
+    session: AsyncSession = Depends(get_session),
+):
+    run = await session.get(ZAJobRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404)
+    if run.status != "pending_approval":
+        raise HTTPException(status_code=400, detail="run is not pending approval")
+    tmpl = await session.get(ZAJobTemplate, run.job_template_id)
+    if not _can_approve(role, tmpl.approver_role if tmpl else None):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role to reject this run")
+
+    params = dict(run.params or {})
+    if payload.reason:
+        params["_rejection_reason"] = payload.reason
+    run.params = params
+    run.status = "rejected"
+    run.ended_at = datetime.now(timezone.utc)
+    await session.commit()
+    return {"run_id": run_id, "status": "rejected"}
 
 
 # NOTE: registered at app-level in main.py (NOT via this /api/v1-prefixed router) so the
@@ -204,6 +302,8 @@ def _out(r: ZAJobRun, tmpl: ZAJobTemplate | None = None) -> dict:
         "credential_id": params.get("_credential_id") or (tmpl.credential_id if tmpl else None),
         "subject_credential_id": params.get("subject_credential_id") or (tmpl.subject_credential_id if tmpl else None),
         "host_credentials": host_credentials,
+        "approver_role": tmpl.approver_role if tmpl else None,
+        "parent_run_id": r.parent_run_id,
         "host_results": getattr(r, "host_results", None) or {},
         "started_at": r.started_at.isoformat() if r.started_at else None,
         "ended_at": r.ended_at.isoformat() if r.ended_at else None,

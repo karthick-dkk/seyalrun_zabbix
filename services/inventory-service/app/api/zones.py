@@ -3,16 +3,70 @@ from __future__ import annotations
 import asyncio
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.servicetoken import mint
+
+from ..config import get_settings
 from ..database import get_session
 from ..deps import require_admin, require_service_token
-from ..models import ZAGateway, ZAZone
+from ..models import ZAHost, ZAHostGroupMember, ZAGateway, ZAZone
 from ..schemas import GatewayCreate, GatewayOut, ZoneCreate, ZoneOut
 
 router = APIRouter(tags=["zones"], dependencies=[Depends(require_service_token)])
+
+
+async def require_admin_or_zone_authorized(
+    zone_id: str,
+    # X-User-Real-Role, NOT X-User-Role: the gateway "vouches" any capability-authorized
+    # write up to X-User-Role: admin (rbac.downstream_role) so ordinary admin-gated CRUD
+    # guards keep working unmodified for custom roles — but that means X-User-Role can't
+    # tell a real admin from a vouched-for support write. X-User-Real-Role carries the
+    # caller's actual role, which this resource-scoped check needs.
+    role: str = Header(default="user", alias="X-User-Real-Role"),
+    user_id: str = Header(default="", alias="X-User-Id"),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Zone *editing* (not create/delete) additionally opens to the 'support' role
+    when they hold a za_authorization for at least one host in this zone — 'support'
+    already has zones:PUT capability in the role matrix (libs.rbaccore), but isn't
+    in the admin/superadmin authz-bypass set, so it needs this resource-scoped check
+    same as every other resource action that role can reach. Mirrors how a user
+    "manages" a zone today: by being authorized against the hosts inside it."""
+    if role in ("admin", "superadmin"):
+        return
+    if role != "support" or not user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin role required")
+
+    settings = get_settings()
+    tok = mint("inventory-service", "identity-service", settings.service_jwt_secret)
+    async with httpx.AsyncClient(base_url=settings.identity_service_url, timeout=10) as client:
+        resp = await client.get(
+            "/api/v1/internal/authz/host-ids",
+            params={"user_id": user_id, "strict": "true"},
+            headers={"X-Service-Token": tok},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="could not resolve host authorization")
+    data = resp.json()
+    host_ids = set(data.get("host_ids") or [])
+    group_ids = set(data.get("host_group_ids") or [])
+    if group_ids:
+        member_result = await session.execute(
+            select(ZAHostGroupMember.host_id).where(ZAHostGroupMember.group_id.in_(group_ids))
+        )
+        host_ids.update(h for (h,) in member_result.all())
+    if not host_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not authorized for any host in this zone")
+
+    count_result = await session.execute(
+        select(ZAHost.id).where(ZAHost.zone_id == zone_id, ZAHost.id.in_(host_ids)).limit(1)
+    )
+    if count_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not authorized for any host in this zone")
 
 
 @router.get("/zones", response_model=list[ZoneOut])
@@ -33,7 +87,7 @@ async def create_zone(payload: ZoneCreate, session: AsyncSession = Depends(get_s
     return zone
 
 
-@router.put("/zones/{zone_id}", response_model=ZoneOut, dependencies=[Depends(require_admin)])
+@router.put("/zones/{zone_id}", response_model=ZoneOut, dependencies=[Depends(require_admin_or_zone_authorized)])
 async def update_zone(zone_id: str, payload: ZoneCreate, session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(ZAZone).where(ZAZone.id == zone_id))
     zone = result.scalar_one_or_none()

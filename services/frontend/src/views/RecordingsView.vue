@@ -92,11 +92,11 @@ function formatSize(bytes: number) {
 <style scoped>
 .empty-state {
   text-align: center;
-  color: var(--color-text-muted, #8b949e);
+  color: var(--text2);
   padding: 40px;
 }
 .badge-muted {
-  color: var(--color-text-muted, #8b949e);
+  color: var(--text2);
   font-size: 12px;
 }
 </style>

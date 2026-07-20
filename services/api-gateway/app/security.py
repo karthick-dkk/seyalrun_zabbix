@@ -19,6 +19,9 @@ from .config import get_settings
 from .redis_client import redis_client
 
 SESSION_PREFIX = "session:"
+# Mirrors identity-service/app/sessions.py's USER_SESSION_PREFIX exactly (same
+# Redis instance) — main.py's logout handler clears this pointer too.
+USER_SESSION_PREFIX = "user_session:"
 
 # httpOnly cross-tab bootstrap cookie — set ONLY on a direct (non-iframe)
 # /auth/login or /auth/change-password response, holding the SAME opaque
@@ -133,6 +136,13 @@ async def lookup_session(token: str) -> dict:
         # Forced password rotation: while set, main.py locks this session to
         # the change-password endpoint (set for default-seeded credentials).
         "pwc": bool(blob.get("pwc", False)),
+        # Login-time MFA gate: while set, main.py locks this session to
+        # auth/mfa/verify-login (+ resend/nav) until the code is verified.
+        "mfa_pending": bool(blob.get("mfa_pending", False)),
+        # Group-enforced MFA gate: no mfa_method yet, but a group requires one —
+        # while set, main.py locks this session to the enrollment endpoints
+        # (not verify-login, since there's no code to verify yet).
+        "mfa_setup_required": bool(blob.get("mfa_setup_required", False)),
         # Server-signed at login (see identity-service auth.py) — forwarded downstream
         # as X-Kiosk-Host-Id so terminal-service can enforce the single-host binding.
         # Never derived from anything client-controlled at this layer.

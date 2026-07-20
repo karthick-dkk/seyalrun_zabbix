@@ -76,6 +76,35 @@ class AuditEntry(BaseModel):
     ip_address: str = ""
 
 
+class DispatchAlertRequest(BaseModel):
+    user_id: str
+    severity: str = "info"  # info | medium | critical
+    subject: str
+    body: str
+
+
+@router.post("/notifications/dispatch-alert")
+async def dispatch_alert(payload: DispatchAlertRequest, session: AsyncSession = Depends(get_session)):
+    """Called by automation-service after creating a user-targeted in-app
+    notification — mails it out too, for any group the user belongs to that
+    has policies.notifications_enabled and a min_severity at or below this
+    notification's severity. Best-effort: a broken mail config or a bad
+    recipient must never surface back to the caller (the in-app notification
+    already succeeded independently of this)."""
+    from ..grouppolicy import notify_recipients
+    from ..mailer import MailError, send_mail
+
+    emails = await notify_recipients(session, payload.user_id, payload.severity)
+    sent, failed = [], []
+    for addr in emails:
+        try:
+            await send_mail(session, addr, payload.subject, payload.body)
+            sent.append(addr)
+        except MailError:
+            failed.append(addr)
+    return {"sent": sent, "failed": failed}
+
+
 @router.post("/audit")
 async def write_audit(entry: AuditEntry, session: AsyncSession = Depends(get_session)):
     """Allows other services (e.g. inventory-service) to append to the shared audit log."""

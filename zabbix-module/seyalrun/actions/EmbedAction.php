@@ -3,11 +3,13 @@
 namespace Modules\SeyalRun\Actions;
 
 require_once __DIR__ . '/../lib/SsoClient.php';
+require_once __DIR__ . '/../lib/Version.php';
 
 use CController;
 use CControllerResponseData;
 use CWebUser;
 use Modules\SeyalRun\Lib\SsoClient;
+use Modules\SeyalRun\Lib\Version;
 
 /**
  * Shared base for every "embedded SeyalRun page" action (Dashboard, Assets,
@@ -51,6 +53,8 @@ abstract class EmbedAction extends CController {
 			'iframe_url' => $iframe_url,
 			'seyalrun_url' => $sso->baseUrl(),
 			'configured' => $sso->isConfigured(),
+			'version' => Version::CURRENT,
+			'website_url' => Version::WEBSITE_URL,
 		]));
 	}
 }

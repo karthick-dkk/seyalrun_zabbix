@@ -59,6 +59,20 @@ class ZAJobTemplate(Base):
     # Nullable: templates created before this column existed, or via a path with no
     # caller identity (e.g. seeded defaults), have no creator on record.
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Null = use the global JOB_EXEC_TIMEOUT_SECONDS ceiling. A per-template value can
+    # only tighten the timeout (see runner.py), never exceed the platform-wide ceiling.
+    timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    # bash_script/account-lifecycle only — bounds concurrent host execution (1 = today's
+    # exact sequential behavior, the safe default). Ignored by ansible_playbook, which
+    # uses `forks` instead (Ansible's own --forks; null = Ansible's own default).
+    max_parallel: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    forks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    approver_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Only meaningful when action_type == "chain": [{"template_id": str, "continue_on_failure": bool}, ...].
+    chain_steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -88,6 +102,9 @@ class ZAJobRun(Base):
     output_lines: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     host_results: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set only for a step run dispatched by a "chain" template's own executor — null for
+    # every normal, directly-triggered run.
+    parent_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -105,6 +122,30 @@ class ZASecretManagementJob(Base):
     last_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ZANotification(Base):
+    __tablename__ = "za_notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    # Null = broadcast to every user (e.g. a run with no resolvable triggering user).
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    severity: Mapped[str] = mapped_column(String(10), nullable=False, default="info")
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False, default="job_run")
+    source_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ZANotificationPreference(Base):
+    __tablename__ = "za_notification_preferences"
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # Severities the user has opted out of in-UI (e.g. ["info"]) — "critical" is never
+    # accepted here (enforced in the API layer), so a failure notification can't be muted.
+    muted_severities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
 
 class ZAHousekeepingJob(Base):

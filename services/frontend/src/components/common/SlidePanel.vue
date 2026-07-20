@@ -90,8 +90,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .dlg-box {
   width: 100%;
   max-height: calc(100vh - 48px);
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--bg2);
+  border: 1px solid var(--border);
   border-radius: 14px;
   display: flex;
   flex-direction: column;
@@ -110,10 +110,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   align-items: flex-start;
   justify-content: space-between;
   padding: 18px 20px 16px;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   gap: 12px;
-  background: #0d1117;
+  background: var(--bg3);
 }
 
 .dlg-head-content { min-width: 0; flex: 1; }
@@ -121,14 +121,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .dlg-title {
   font-size: 15px;
   font-weight: 600;
-  color: #e6edf3;
+  color: var(--text);
   margin: 0;
   line-height: 1.3;
 }
 
 .dlg-subtitle {
   font-size: 12px;
-  color: #6e7681;
+  color: var(--text2);
   margin: 4px 0 0;
   white-space: nowrap;
   overflow: hidden;
@@ -152,15 +152,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
-  color: #484f58;
+  color: var(--text2);
   cursor: pointer;
   transition: color 0.12s, border-color 0.12s, background 0.12s;
   flex-shrink: 0;
 }
 .dlg-close:hover {
-  color: #e6edf3;
-  border-color: #30363d;
-  background: #21262d;
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--border);
 }
 
 /* ── Body ───────────────────────────────────────────────────────────────── */
@@ -172,7 +172,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 .dlg-body::-webkit-scrollbar { width: 5px; }
 .dlg-body::-webkit-scrollbar-track { background: transparent; }
-.dlg-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+.dlg-body::-webkit-scrollbar-thumb { background: rgba(120,120,120,0.35); border-radius: 3px; }
 
 /* ── Footer ─────────────────────────────────────────────────────────────── */
 .dlg-footer {
@@ -181,9 +181,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   justify-content: flex-end;
   gap: 8px;
   padding: 14px 20px;
-  border-top: 1px solid #21262d;
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
-  background: #0d1117;
+  background: var(--bg3);
 }
 
 /* ── Transitions ────────────────────────────────────────────────────────── */

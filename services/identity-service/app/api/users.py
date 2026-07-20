@@ -8,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..audit import log_action
 from ..database import get_session
 from ..deps import require_admin, require_service_token, require_superadmin
-from ..models import ZAGroupRole, ZARole, ZAUser, ZAUserGroup, ZAUserGroupMember, ZAUserRole
+from ..models import ZAGroupIpRestriction, ZAGroupNotifyConfig, ZAGroupRole, ZARole, ZAUser, ZAUserGroup, ZAUserGroupMember, ZAUserRole
 from ..schemas import (
+    GroupIpRestrictionUpdate,
     GroupMembersUpdate,
+    GroupNotifyConfigUpdate,
+    GroupPoliciesUpdate,
     RoleCreate,
     RoleOut,
     RoleUpdate,
@@ -91,6 +94,18 @@ def _guard_grants_allpower(permissions: dict | None, actor_role: str) -> None:
                             detail="only a superadmin may create/grant an all-access or reveal-capable role")
 
 
+def _guard_group_mfa_enforce(current: bool, new: bool, actor_role: str) -> None:
+    """Changing group-level MFA enforcement in EITHER direction requires superadmin.
+    Turning it ON forces every member into MFA (same sensitivity tier as reveal/
+    all-access role grants, and it bypasses members' own role-level "mfa" flag).
+    Turning it OFF removes a security control from every member — asymmetric
+    gating (superadmin-only ON, unrestricted OFF) would let any plain admin
+    silently strip a superadmin-imposed MFA requirement from a target group."""
+    if current != new and actor_role != "superadmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="only a superadmin may change MFA enforcement for a group")
+
+
 @router.get("/users/groups/{group_id}/roles")
 async def get_group_roles(group_id: str, session: AsyncSession = Depends(get_session)):
     rows = await session.execute(select(ZAGroupRole.role_id).where(ZAGroupRole.group_id == group_id))
@@ -126,6 +141,117 @@ async def set_group_roles(
     await log_action(session, user_id=actor_id, username=actor_name or "", action="group.roles.set",
                      resource_type="user-group", resource_id=group_id, details={"role_ids": payload.role_ids})
     return {"group_id": group_id, "role_ids": payload.role_ids}
+
+
+@router.put("/users/groups/{group_id}/policies", response_model=UserGroupOut, dependencies=[Depends(require_admin)])
+async def set_group_policies(
+    group_id: str,
+    payload: GroupPoliciesUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor_role: str = Header(default="user", alias="X-User-Role"),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    """Changing mfa_enforced (either direction) requires a genuine superadmin (see
+    _guard_group_mfa_enforce); setup_wizard/notifications_enabled/single_session_enabled/
+    ip_restriction_enabled stay admin-gated like the rest of group management."""
+    result = await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))
+    group = result.scalar_one_or_none()
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+
+    current_mfa_enforced = bool((group.policies or {}).get("mfa_enforced"))
+    _guard_group_mfa_enforce(current_mfa_enforced, payload.mfa_enforced, actor_role)
+
+    group.policies = {
+        "mfa_enforced": payload.mfa_enforced,
+        "setup_wizard": payload.setup_wizard,
+        "notifications_enabled": payload.notifications_enabled,
+        "single_session_enabled": payload.single_session_enabled,
+        "ip_restriction_enabled": payload.ip_restriction_enabled,
+    }
+    await session.commit()
+    await session.refresh(group)
+
+    await log_action(session, user_id=actor_id, username=actor_name or "", action="group.policies.set",
+                     resource_type="user-group", resource_id=group_id, details=group.policies)
+    return group
+
+
+async def _get_or_create_ip_restriction(session: AsyncSession, group_id: str) -> ZAGroupIpRestriction:
+    result = await session.execute(select(ZAGroupIpRestriction).where(ZAGroupIpRestriction.group_id == group_id))
+    cfg = result.scalar_one_or_none()
+    if cfg is None:
+        cfg = ZAGroupIpRestriction(group_id=group_id, cidrs=[])
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
+    return cfg
+
+
+@router.get("/users/groups/{group_id}/ip-restriction", dependencies=[Depends(require_admin)])
+async def get_group_ip_restriction(group_id: str, session: AsyncSession = Depends(get_session)):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_ip_restriction(session, group_id)
+    return {"cidrs": cfg.cidrs}
+
+
+@router.put("/users/groups/{group_id}/ip-restriction", dependencies=[Depends(require_admin)])
+async def put_group_ip_restriction(
+    group_id: str,
+    payload: GroupIpRestrictionUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_ip_restriction(session, group_id)
+    cfg.cidrs = payload.cidrs
+    await session.commit()
+    await log_action(session, user_id=actor_id, username=actor_name or "", action="group.ip_restriction.set",
+                     resource_type="user-group", resource_id=group_id, details={"cidrs": payload.cidrs})
+    return {"cidrs": cfg.cidrs}
+
+
+async def _get_or_create_notify_config(session: AsyncSession, group_id: str) -> ZAGroupNotifyConfig:
+    result = await session.execute(select(ZAGroupNotifyConfig).where(ZAGroupNotifyConfig.group_id == group_id))
+    cfg = result.scalar_one_or_none()
+    if cfg is None:
+        cfg = ZAGroupNotifyConfig(group_id=group_id, emails=[], min_severity="medium")
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
+    return cfg
+
+
+@router.get("/users/groups/{group_id}/notify-config", dependencies=[Depends(require_admin)])
+async def get_group_notify_config(group_id: str, session: AsyncSession = Depends(get_session)):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_notify_config(session, group_id)
+    return {"emails": cfg.emails, "min_severity": cfg.min_severity}
+
+
+@router.put("/users/groups/{group_id}/notify-config", dependencies=[Depends(require_admin)])
+async def put_group_notify_config(
+    group_id: str,
+    payload: GroupNotifyConfigUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_notify_config(session, group_id)
+    cfg.emails = payload.emails
+    cfg.min_severity = payload.min_severity
+    await session.commit()
+    await log_action(session, user_id=actor_id, username=actor_name or "", action="group.notify_config.set",
+                     resource_type="user-group", resource_id=group_id,
+                     details={"emails": payload.emails, "min_severity": payload.min_severity})
+    return {"emails": cfg.emails, "min_severity": cfg.min_severity}
 
 
 async def _user_roles(session: AsyncSession, user_id: str) -> tuple[list[str], list[str]]:
@@ -164,6 +290,10 @@ async def _user_out(session: AsyncSession, user: ZAUser) -> UserOut:
         is_active=user.is_active,
         must_change_password=user.must_change_password,
         totp_enabled=user.totp_enabled,
+        mfa_method=user.mfa_method,
+        allowed_ips=user.allowed_ips or [],
+        ip_restriction_enabled=user.ip_restriction_enabled,
+        single_session_enabled=user.single_session_enabled,
         created_at=user.created_at,
     )
 
@@ -321,6 +451,12 @@ async def update_user(
         user.is_active = payload.is_active
     if payload.password:
         user.password_hash = hash_password(payload.password)
+    if payload.allowed_ips is not None:
+        user.allowed_ips = payload.allowed_ips
+    if payload.ip_restriction_enabled is not None:
+        user.ip_restriction_enabled = payload.ip_restriction_enabled
+    if payload.single_session_enabled is not None:
+        user.single_session_enabled = payload.single_session_enabled
 
     # Guard before commit: a role change or deactivation must not zero the superadmins.
     await session.flush()
@@ -379,6 +515,36 @@ async def delete_user(
         session, user_id=actor_id, username=actor_name or "", action="user.delete",
         resource_type="user", resource_id=user_id, details={"username": username},
     )
+
+
+@router.post("/users/{user_id}/mfa/reset", dependencies=[Depends(require_superadmin)])
+async def reset_user_mfa(
+    user_id: str,
+    session: AsyncSession = Depends(get_session),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    """Recovery path for a lost authenticator/mailbox: clears the target's MFA
+    enrollment entirely so they can re-enroll from scratch. require_superadmin
+    checks the literal X-User-Role header, which is safe here (not the vouched-role
+    bypass fixed elsewhere this session) because api-gateway's downstream_role()
+    only ever elevates a write up to "admin", never "superadmin" — so a genuine
+    X-User-Role: superadmin can only come from an actual superadmin session."""
+    result = await session.execute(select(ZAUser).where(ZAUser.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    user.totp_secret = ""
+    user.totp_enabled = False
+    user.mfa_method = None
+    await session.commit()
+
+    await log_action(
+        session, user_id=actor_id, username=actor_name or "", action="user.mfa_reset",
+        resource_type="user", resource_id=user_id, details={"username": user.username},
+    )
+    return {"mfa_method": None}
 
 
 @router.get("/users/groups", response_model=list[UserGroupOut])

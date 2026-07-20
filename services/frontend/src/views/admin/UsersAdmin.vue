@@ -53,6 +53,12 @@
               <div style="display:flex;gap:8px;justify-content:flex-end">
                 <button class="btn-pill btn-pill-outline" @click="openEditUser(u)">✎ Edit</button>
                 <button
+                  v-if="auth.isSuperAdmin && u.mfa_method"
+                  class="btn-pill btn-pill-outline"
+                  title="Clear this user's MFA enrollment so they can re-enroll"
+                  @click="resetUserMfa(u)"
+                >⟲ Reset MFA</button>
+                <button
                   v-if="auth.isSuperAdmin && !u.zabbix_userid"
                   class="btn-pill btn-pill-outline"
                   style="color:var(--danger);border-color:var(--danger)"
@@ -107,6 +113,7 @@
                 <span v-if="g.zabbix_usrgrpid" class="src-badge src-badge--zbx" title="Synced from Zabbix">Z</span>
                 <span v-else class="src-badge src-badge--sr" title="SeyalRun native group">S</span>
                 {{ g.name }}
+                <span v-if="g.policies?.mfa_enforced" class="badge badge-blue" style="margin-left:4px;font-size:10px" title="Members must set up MFA">MFA</span>
               </td>
               <td style="color:var(--text2)">{{ g.description || '—' }}</td>
               <td style="color:var(--text2);font-size:12px">{{ g.member_count ?? '—' }}</td>
@@ -251,6 +258,21 @@
             <button :class="['fp-toggle', !userForm.is_active && 'active']" @click="userForm.is_active = false">Disabled</button>
           </div>
         </div>
+        <template v-if="editingUser">
+          <div class="fp-section-head">Security Policies</div>
+          <label class="opt-row">
+            <input type="checkbox" v-model="userForm.single_session_enabled" />
+            <span><b>Enforce single session</b> — logging in elsewhere ends this user's other session immediately.</span>
+          </label>
+          <label class="opt-row">
+            <input type="checkbox" v-model="userForm.ip_restriction_enabled" />
+            <span><b>Restrict login IPs</b> — only allow login from the IPs below.</span>
+          </label>
+          <div v-if="userForm.ip_restriction_enabled" class="fp-field">
+            <label class="fp-label">Allowed login IPs <span class="fp-opt">(CIDR, one per line)</span></label>
+            <textarea v-model="userForm.allowed_ips_text" class="fp-input" rows="2" placeholder="203.0.113.4/32" style="resize:vertical;font-family:inherit"></textarea>
+          </div>
+        </template>
 
         <!-- Groups assignment -->
         <div class="fp-section-head">Group Memberships</div>
@@ -284,6 +306,53 @@
           <label class="fp-label">Description</label>
           <input v-model="groupForm.description" class="fp-input" placeholder="Optional description" />
         </div>
+
+        <div class="fp-section-head">Group Policies</div>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.mfa_enforced" :disabled="!auth.isSuperAdmin" />
+          <span>
+            <b>Require MFA for this group</b>
+            <span v-if="!auth.isSuperAdmin" style="color:var(--text2)"> (superadmin only)</span>
+            — members without MFA are blocked from everything except enrollment until they set it up.
+          </span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.setup_wizard" />
+          <span><b>Show setup wizard for new members</b> — a one-time guided first-login flow.</span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.notifications_enabled" />
+          <span><b>Notify by email</b> — mail job-run alerts for this group's members to the addresses below.</span>
+        </label>
+        <template v-if="groupForm.notifications_enabled">
+          <div class="fp-field">
+            <label class="fp-label">Recipient emails (one per line)</label>
+            <textarea v-model="groupForm.notify_emails_text" class="fp-input" rows="3" placeholder="oncall@example.com" style="resize:vertical;font-family:inherit"></textarea>
+          </div>
+          <div class="fp-field">
+            <label class="fp-label">Minimum severity</label>
+            <select v-model="groupForm.notify_min_severity" class="fp-input">
+              <option value="info">Info and above (everything)</option>
+              <option value="medium">Medium and above</option>
+              <option value="critical">Critical only</option>
+            </select>
+          </div>
+        </template>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.single_session_enabled" />
+          <span><b>Enforce single session</b> — members are logged out of any other session the moment they log in elsewhere.</span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.ip_restriction_enabled" />
+          <span><b>Restrict login IPs</b> — members may only log in from the IPs below. Combines with any individual restriction of theirs — both must match.</span>
+        </label>
+        <template v-if="groupForm.ip_restriction_enabled">
+          <div class="fp-field">
+            <label class="fp-label">Allowed IPs (CIDR, one per line)</label>
+            <textarea v-model="groupForm.ip_cidrs_text" class="fp-input" rows="2" placeholder="203.0.113.0/24" style="resize:vertical;font-family:inherit"></textarea>
+          </div>
+        </template>
+
         <div v-if="groupError" class="fp-error">{{ groupError }}</div>
       </div>
       <template #footer>
@@ -434,6 +503,12 @@ async function deleteUser(u: any) {
   catch (e: any) { alert(e?.response?.data?.detail || 'Failed to delete user') }
 }
 
+async function resetUserMfa(u: any) {
+  if (!await confirm(`Reset MFA for "${u.username}"? They will need to re-enroll from scratch.`, { title: 'Reset MFA', danger: true, confirmLabel: 'Reset MFA' })) return
+  try { await api.post(`/users/${u.id}/mfa/reset`); await loadUsers() }
+  catch (e: any) { alert(e?.response?.data?.detail || 'Failed to reset MFA') }
+}
+
 async function deleteGroup(g: any) {
   if (!await confirm(`Delete group "${g.name}"? This cannot be undone.`, { title: 'Delete Group', danger: true, confirmLabel: 'Delete' })) return
   try { await api.delete(`/users/groups/${g.id}`); await loadGroups() }
@@ -444,7 +519,10 @@ async function deleteGroup(g: any) {
 const showUserPanel = ref(false)
 const editingUser = ref<any>(null)
 const activeUserId = ref<string | null>(null)
-const userForm = reactive({ username: '', display_name: '', email: '', password: '', role_ids: [] as string[], is_active: true })
+const userForm = reactive({
+  username: '', display_name: '', email: '', password: '', role_ids: [] as string[], is_active: true,
+  allowed_ips_text: '', ip_restriction_enabled: false, single_session_enabled: false,
+})
 const userGroupsPicker = ref<PickerItem[]>([])
 const userError = ref('')
 const savingUser = ref(false)
@@ -452,7 +530,10 @@ const savingUser = ref(false)
 function openCreateUser() {
   editingUser.value = null
   activeUserId.value = null
-  Object.assign(userForm, { username: '', display_name: '', email: '', password: '', role_ids: [], is_active: true })
+  Object.assign(userForm, {
+    username: '', display_name: '', email: '', password: '', role_ids: [], is_active: true,
+    allowed_ips_text: '', ip_restriction_enabled: false, single_session_enabled: false,
+  })
   userGroupsPicker.value = []
   userError.value = ''
   showUserPanel.value = true
@@ -464,6 +545,9 @@ function openEditUser(u: any) {
   Object.assign(userForm, {
     username: u.username, display_name: u.display_name || '', email: u.email || '',
     password: '', role_ids: [...(u.role_ids || (u.role_id ? [u.role_id] : []))], is_active: u.is_active,
+    allowed_ips_text: (u.allowed_ips || []).join('\n'),
+    ip_restriction_enabled: !!u.ip_restriction_enabled,
+    single_session_enabled: !!u.single_session_enabled,
   })
   // Pre-fill group memberships
   userGroupsPicker.value = groups.value
@@ -486,6 +570,9 @@ async function saveUser() {
         email: userForm.email,
         role_ids: userForm.role_ids,
         is_active: userForm.is_active,
+        allowed_ips: userForm.allowed_ips_text.split('\n').map(s => s.trim()).filter(Boolean),
+        ip_restriction_enabled: userForm.ip_restriction_enabled,
+        single_session_enabled: userForm.single_session_enabled,
       }
       if (userForm.password) payload.password = userForm.password
       await api.put(`/users/${userId}`, payload)
@@ -520,22 +607,52 @@ async function saveUser() {
 // ── Group panel ────────────────────────────────────────────────────────────
 const showGroupPanel = ref(false)
 const editingGroup = ref<any>(null)
-const groupForm = reactive({ name: '', description: '' })
+const groupForm = reactive({
+  name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false,
+  notify_emails_text: '', notify_min_severity: 'medium',
+  single_session_enabled: false, ip_restriction_enabled: false, ip_cidrs_text: '',
+})
 const groupError = ref('')
 const savingGroup = ref(false)
 
 function openCreateGroup() {
   editingGroup.value = null
-  Object.assign(groupForm, { name: '', description: '' })
+  Object.assign(groupForm, {
+    name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false,
+    notify_emails_text: '', notify_min_severity: 'medium',
+    single_session_enabled: false, ip_restriction_enabled: false, ip_cidrs_text: '',
+  })
   groupError.value = ''
   showGroupPanel.value = true
 }
 
-function openEditGroup(g: any) {
+async function openEditGroup(g: any) {
   editingGroup.value = g
-  Object.assign(groupForm, { name: g.name, description: g.description || '' })
+  Object.assign(groupForm, {
+    name: g.name, description: g.description || '',
+    mfa_enforced: !!g.policies?.mfa_enforced,
+    setup_wizard: !!g.policies?.setup_wizard,
+    notifications_enabled: !!g.policies?.notifications_enabled,
+    notify_emails_text: '', notify_min_severity: 'medium',
+    single_session_enabled: !!g.policies?.single_session_enabled,
+    ip_restriction_enabled: !!g.policies?.ip_restriction_enabled,
+    ip_cidrs_text: '',
+  })
   groupError.value = ''
   showGroupPanel.value = true
+  if (g.policies?.notifications_enabled) {
+    try {
+      const { data } = await api.get(`/users/groups/${g.id}/notify-config`)
+      groupForm.notify_emails_text = (data.emails || []).join('\n')
+      groupForm.notify_min_severity = data.min_severity || 'medium'
+    } catch { /* leave defaults if the fetch fails */ }
+  }
+  if (g.policies?.ip_restriction_enabled) {
+    try {
+      const { data } = await api.get(`/users/groups/${g.id}/ip-restriction`)
+      groupForm.ip_cidrs_text = (data.cidrs || []).join('\n')
+    } catch { /* leave defaults if the fetch fails */ }
+  }
 }
 
 function closeGroupPanel() { showGroupPanel.value = false; editingGroup.value = null }
@@ -544,10 +661,29 @@ async function saveGroup() {
   savingGroup.value = true
   groupError.value = ''
   try {
+    let groupId = editingGroup.value?.id
     if (editingGroup.value) {
-      await api.put(`/users/groups/${editingGroup.value.id}`, { name: groupForm.name, description: groupForm.description })
+      await api.put(`/users/groups/${groupId}`, { name: groupForm.name, description: groupForm.description })
     } else {
-      await api.post('/users/groups', { name: groupForm.name, description: groupForm.description })
+      const { data } = await api.post('/users/groups', { name: groupForm.name, description: groupForm.description })
+      groupId = data.id
+    }
+    // Group policies live in a separate doc (za_user_groups.policies) — mfa_enforced
+    // may only be changed by a genuine superadmin (server re-checks this too).
+    await api.put(`/users/groups/${groupId}/policies`, {
+      mfa_enforced: groupForm.mfa_enforced,
+      setup_wizard: groupForm.setup_wizard,
+      notifications_enabled: groupForm.notifications_enabled,
+      single_session_enabled: groupForm.single_session_enabled,
+      ip_restriction_enabled: groupForm.ip_restriction_enabled,
+    })
+    if (groupForm.notifications_enabled) {
+      const emails = groupForm.notify_emails_text.split('\n').map(s => s.trim()).filter(Boolean)
+      await api.put(`/users/groups/${groupId}/notify-config`, { emails, min_severity: groupForm.notify_min_severity })
+    }
+    if (groupForm.ip_restriction_enabled) {
+      const cidrs = groupForm.ip_cidrs_text.split('\n').map(s => s.trim()).filter(Boolean)
+      await api.put(`/users/groups/${groupId}/ip-restriction`, { cidrs })
     }
     closeGroupPanel()
     loadGroups()
@@ -693,38 +829,40 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
 .fp-form { display: flex; flex-direction: column; gap: 10px; }
 .fp-section-head {
   font-size: 10px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.08em; color: #484f58; margin-top: 6px; padding-bottom: 4px;
-  border-bottom: 1px solid #21262d;
+  letter-spacing: 0.08em; color: var(--text2); margin-top: 6px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
 }
 .fp-field { display: flex; flex-direction: column; gap: 5px; }
-.fp-label { font-size: 12px; color: #8b949e; font-weight: 500; }
+.fp-label { font-size: 12px; color: var(--text2); font-weight: 500; }
 .fp-input {
-  padding: 7px 10px; background: #161b22; border: 1px solid #30363d;
-  border-radius: 5px; color: #e6edf3; font-size: 13px; outline: none;
+  padding: 7px 10px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--text); font-size: 13px; outline: none;
   width: 100%; box-sizing: border-box;
 }
-.fp-input:focus { border-color: #58a6ff; }
+.fp-input:focus { border-color: var(--accent2); }
 .fp-input:disabled { opacity: 0.5; cursor: not-allowed; }
-.fp-error { font-size: 12px; color: #f85149; padding: 4px 0; }
-.fp-hint { font-size: 12px; color: #484f58; background: #161b22; border: 1px solid #21262d; border-radius: 5px; padding: 8px 10px; }
+.fp-error { font-size: 12px; color: var(--danger); padding: 4px 0; }
+.fp-hint { font-size: 12px; color: var(--text2); background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; }
+.opt-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); padding: 3px 0; cursor: pointer; line-height: 1.5; }
+.opt-row input { accent-color: var(--accent2); width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
 
-.fp-toggle-group { display: flex; background: #161b22; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.fp-toggle-group { display: flex; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .fp-toggle {
   flex: 1; padding: 5px 0; font-size: 12px; font-weight: 500;
-  background: transparent; border: none; color: #484f58; cursor: pointer;
+  background: transparent; border: none; color: var(--text2); cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
-.fp-toggle.active { background: #21262d; color: #e6edf3; }
-.fp-toggle:hover:not(.active) { color: #8b949e; }
+.fp-toggle.active { background: var(--bg2); color: var(--text); }
+.fp-toggle:hover:not(.active) { color: var(--text); }
 
 /* Inline members expand */
 .btn-pill-active {
-  background: rgba(88,166,255,0.15); border-color: #58a6ff; color: #58a6ff;
+  background: rgba(88,166,255,0.15); border-color: var(--accent2); color: var(--accent2);
 }
 .members-expand-row td { border-top: none !important; }
 .members-expand {
-  border-top: 1px solid #21262d;
-  background: #0d1117;
+  border-top: 1px solid var(--border);
+  background: var(--bg3);
   padding: 0;
 }
 .members-expand-header {
@@ -732,18 +870,18 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
   padding: 10px 14px 6px;
 }
 .members-expand-title {
-  font-size: 12px; font-weight: 600; color: #8b949e;
+  font-size: 12px; font-weight: 600; color: var(--text2);
   text-transform: uppercase; letter-spacing: 0.06em;
 }
 .members-search {
   display: block; width: 100%; box-sizing: border-box;
   margin: 0; padding: 7px 14px;
-  background: #161b22; border: none;
-  border-top: 1px solid #21262d; border-bottom: 1px solid #21262d;
-  color: #e6edf3; font-size: 13px; outline: none;
+  background: var(--bg3); border: none;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  color: var(--text); font-size: 13px; outline: none;
 }
-.members-search::placeholder { color: #484f58; }
-.members-search:focus { background: #1c2128; }
+.members-search::placeholder { color: var(--text2); }
+.members-search:focus { background: var(--bg2); }
 .members-list {
   max-height: 220px; overflow-y: auto;
   padding: 4px 0;
@@ -754,32 +892,32 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
   transition: background 0.1s;
   user-select: none;
 }
-.members-row:hover { background: #161b22; }
+.members-row:hover { background: var(--bg3); }
 .members-row.checked { background: rgba(88,166,255,0.06); }
 .members-checkbox {
   width: 15px; height: 15px; flex-shrink: 0;
-  accent-color: #58a6ff; cursor: pointer;
+  accent-color: var(--accent2); cursor: pointer;
 }
-.members-username { font-size: 13px; color: #e6edf3; font-weight: 500; }
-.members-display { font-size: 12px; color: #484f58; }
+.members-username { font-size: 13px; color: var(--text); font-weight: 500; }
+.members-display { font-size: 12px; color: var(--text2); }
 .members-expand-footer {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 10px 14px;
-  border-top: 1px solid #21262d;
+  border-top: 1px solid var(--border);
 }
 
-.fp-opt { font-size: 10px; font-weight: 400; color: #6e7681; }
+.fp-opt { font-size: 10px; font-weight: 400; color: var(--text2); }
 .role-check-list { display: flex; flex-direction: column; gap: 6px; }
 .role-check {
   display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px;
-  padding: 7px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg3);
   cursor: pointer; transition: border-color 0.12s, background 0.12s;
 }
-.role-check:hover { border-color: #58a6ff; }
+.role-check:hover { border-color: var(--accent2); }
 .role-check.checked { border-color: rgba(88,166,255,0.5); background: rgba(88,166,255,0.08); }
-.role-check input { accent-color: #58a6ff; width: 15px; height: 15px; }
-.role-check-name { font-size: 13px; font-weight: 600; color: #e6edf3; text-transform: capitalize; }
-.role-check-desc { font-size: 11px; color: #6e7681; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-check input { accent-color: var(--accent2); width: 15px; height: 15px; }
+.role-check-name { font-size: 13px; font-weight: 600; color: var(--text); text-transform: capitalize; }
+.role-check-desc { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Source badges (Zabbix vs native) ───────────────────────────────────── */
 .src-badge {
@@ -788,18 +926,18 @@ onMounted(() => { loadUsers(); loadGroups(); loadRoles() })
   font-size: 9px; font-weight: 800; line-height: 1; flex-shrink: 0;
 }
 .src-badge--zbx { background: rgba(240,136,62,0.15); border: 1px solid rgba(240,136,62,0.5); color: #f0883e; }
-.src-badge--sr  { background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.35); color: #58a6ff; }
+.src-badge--sr  { background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.35); color: var(--accent2); }
 
 /* ── New-accounts-from-sync modal ───────────────────────────────────────── */
 .new-account-row {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 10px; border: 1px solid #21262d; border-radius: 6px; margin-bottom: 6px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px;
 }
-.new-account-user { font-size: 13px; font-weight: 600; color: #e6edf3; }
-.new-account-pw { font-size: 13px; color: #f0883e; background: #0d1117; padding: 2px 8px; border-radius: 4px; }
+.new-account-user { font-size: 13px; font-weight: 600; color: var(--text); }
+.new-account-pw { font-size: 13px; color: #f0883e; background: var(--bg3); padding: 2px 8px; border-radius: 4px; }
 
 /* ── Group roles expand (mirrors the members expand pattern) ───────────── */
-.roles-expand { border-top: 1px solid #21262d; background: #0d1117; padding: 12px 14px; }
-.roles-expand-title { font-size: 12px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+.roles-expand { border-top: 1px solid var(--border); background: var(--bg3); padding: 12px 14px; }
+.roles-expand-title { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
 .roles-expand-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 </style>

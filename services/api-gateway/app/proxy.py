@@ -50,6 +50,8 @@ SERVICE_ROUTES: dict[str, tuple[str, str]] = {
     "job-runs": ("automation_service_url", "automation-service"),
     "secret-management-jobs": ("automation_service_url", "automation-service"),
     "housekeeping": ("automation_service_url", "automation-service"),
+    "test-connection": ("automation_service_url", "automation-service"),
+    "notifications": ("automation_service_url", "automation-service"),
     "trigger-bindings": ("zabbix_integration_service_url", "zabbix-integration-service"),
     "triggers": ("zabbix_integration_service_url", "zabbix-integration-service"),
     "metrics": ("metrics_service_url", "metrics-service"),
@@ -76,6 +78,10 @@ async def proxy(request: Request, path: str, identity: dict) -> Response:
     headers["X-Service-Token"] = mint("api-gateway", audience, settings.service_jwt_secret)
     headers["X-User-Id"] = identity.get("user_id", "")
     headers["X-User-Role"] = identity.get("role", "")
+    # Un-elevated role — see main.py's identity["real_role"] comment. Only a handful
+    # of downstream resource-scoped checks (e.g. zones.py) need this; everything else
+    # keeps using the (possibly write-vouched) X-User-Role as before.
+    headers["X-User-Real-Role"] = identity.get("real_role", identity.get("role", ""))
     headers["X-User-Name"] = identity.get("username", "")
     if identity.get("kiosk_host_id"):
         headers["X-Kiosk-Host-Id"] = identity["kiosk_host_id"]

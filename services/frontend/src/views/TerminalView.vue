@@ -64,6 +64,7 @@
 
       <div class="menu-status">
         <span v-if="activeSessionCount" class="conn-badge">{{ activeSessionCount }} connected</span>
+        <button v-if="!auth.isKiosk" class="menu-capture" :disabled="!focusedPane?.session" @click="editSnip" title="Capture screen (Ctrl/Cmd+S)">📷 Capture</button>
         <button class="menu-close" @click="() => window.close()" title="Close Window">✕</button>
       </div>
     </header>
@@ -148,6 +149,8 @@
               :ref="(el: any) => { termRefs.primary = el }"
               @disconnected="onDisconnected(activePaneId)"
               @reconnect="onReconnect(activePaneId)"
+              @split="doSplit"
+              @font-size-delta="adjustFontSize"
             />
             <div v-else class="pane-empty">
               <div class="pane-empty-inner" :class="{ 'pane-empty-error': activePane?.error }">
@@ -186,6 +189,8 @@
               :ref="(el: any) => { termRefs.secondary = el }"
               @disconnected="onDisconnected(splitId!)"
               @reconnect="onReconnect(splitId!)"
+              @split="doSplit"
+              @font-size-delta="adjustFontSize"
             />
             <div v-else class="pane-empty">
               <div class="pane-empty-inner" :class="{ 'pane-empty-error': splitPane?.error }">
@@ -313,6 +318,9 @@ interface Ctx { visible: boolean; x: number; y: number; host: any; credentials: 
 const route = useRoute()
 
 const fontSize = ref(14)
+function adjustFontSize(delta: number) {
+  fontSize.value = Math.min(28, Math.max(8, fontSize.value + delta))
+}
 
 // ── Terminal themes ─────────────────────────────────────────────────────────
 const THEMES: Record<string, Record<string, string>> = {
@@ -398,6 +406,7 @@ const filteredSeyalRunHosts = computed(() =>
 
 const activePane = computed(() => panes.value.find(p => p.id === activePaneId.value) ?? null)
 const splitPane  = computed(() => panes.value.find(p => p.id === splitId.value) ?? null)
+const focusedPane = computed(() => focusedSide.value === 'secondary' ? splitPane.value : activePane.value)
 
 const activeSessionCount = computed(() => panes.value.filter(p => p.session && !p.disconnected).length)
 
@@ -565,7 +574,15 @@ function exitSplit() {
 function doSplit(dir: 'h' | 'v') {
   if (auth.isKiosk) return   // defense in depth — the UI trigger is already hidden
   closeAll()
+  // addPane() always makes the pane it creates the active one (a side effect every
+  // other caller wants) — here the new pane is the SPLIT side, not the primary, so
+  // that reassignment must be undone or it silently steals the primary slot away
+  // from whatever session was already showing there, unmounting it. Confirmed live:
+  // this is why clicking Split appeared to "reload" every open session at once —
+  // both the primary and secondary slots ended up pointing at the same new, empty pane.
+  const originalActiveId = activePaneId.value
   const p = addPane()
+  activePaneId.value = originalActiveId
   splitId.value = p.id
   splitDir.value = dir
   focusedSide.value = 'secondary'
@@ -663,7 +680,11 @@ function ctxSplitConnect(dir: 'h' | 'v') {
   closeAll()
   if (!host) return
   if (!splitId.value) {
+    // See doSplit()'s comment — addPane() reassigns activePaneId as a side effect,
+    // which must be undone here too or the primary pane's session gets unmounted.
+    const originalActiveId = activePaneId.value
     const p = addPane(host.name)
+    activePaneId.value = originalActiveId
     splitId.value = p.id
     splitDir.value = dir
     focusedSide.value = 'secondary'
@@ -910,6 +931,17 @@ onBeforeUnmount(() => {
   border-radius: 4px;
 }
 .menu-close:hover { background: #da3633; color: #fff; }
+.menu-capture {
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #dce1e7;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.menu-capture:hover:not(:disabled) { border-color: #58a6ff; color: #58a6ff; }
+.menu-capture:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── Main layout ──────────────────────────────────────────────────────────── */
 .ssh-layout {

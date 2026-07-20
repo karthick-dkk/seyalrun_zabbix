@@ -42,6 +42,10 @@ class UserOut(BaseModel):
     role_ids: list[str] = []       # all role ids (for the assignment UI)
     is_active: bool
     totp_enabled: bool = False
+    mfa_method: str | None = None  # "totp" | "email" | None
+    allowed_ips: list[str] = Field(default_factory=list)  # CIDR list; empty = unrestricted
+    ip_restriction_enabled: bool = False  # explicit opt-in toggle, v1.3
+    single_session_enabled: bool = False  # opt-in per user (or via group), v1.3
     must_change_password: bool = False
     created_at: datetime
     # Server-asserted for this login only (session-scoped, not a DB attribute of
@@ -62,6 +66,17 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+    # Set when the minted session carries the mfa_pending claim — the token is
+    # usable ONLY for POST /auth/mfa/verify-login (+ auth/nav) until that's
+    # cleared (api-gateway enforces the allowlist; see main.py's mfa_pending block).
+    mfa_required: bool = False
+    mfa_method: str | None = None
+    # Group-enforced: no mfa_method yet, but a group requires one — distinct from
+    # mfa_required (which means "already enrolled, verify a code this session").
+    mfa_setup_required: bool = False
+    # Informational only (not gateway-enforced) — a group wants the first-login
+    # setup wizard shown and this user hasn't been through it yet.
+    needs_setup_wizard: bool = False
 
 
 class UserCreate(BaseModel):
@@ -80,6 +95,9 @@ class UserUpdate(BaseModel):
     role_id: str | None = None
     role_ids: list[str] | None = None   # v1.1 multi-role assignment
     is_active: bool | None = None
+    allowed_ips: list[str] | None = None  # CIDR list; None = unchanged, [] = clear
+    ip_restriction_enabled: bool | None = None
+    single_session_enabled: bool | None = None
 
 
 class RoleOut(BaseModel):
@@ -115,6 +133,7 @@ class UserGroupOut(BaseModel):
     name: str
     description: str
     zabbix_usrgrpid: str | None = None
+    policies: dict = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -124,6 +143,23 @@ class GroupMembersUpdate(BaseModel):
 
 class GroupRolesUpdate(BaseModel):
     role_ids: list[str]
+
+
+class GroupPoliciesUpdate(BaseModel):
+    mfa_enforced: bool = False
+    setup_wizard: bool = False
+    notifications_enabled: bool = False
+    single_session_enabled: bool = False
+    ip_restriction_enabled: bool = False
+
+
+class GroupNotifyConfigUpdate(BaseModel):
+    emails: list[str] = Field(default_factory=list)
+    min_severity: str = "medium"  # info | medium | critical
+
+
+class GroupIpRestrictionUpdate(BaseModel):
+    cidrs: list[str] = Field(default_factory=list)
 
 
 class AuthorizationCreate(BaseModel):

@@ -2,7 +2,15 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { setToken } from '@/api/client'
 
-export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'integration', 'platform', 'health', 'housekeeping', 'log-backend']
+export const VALID_ADMIN_SECTIONS = ['users', 'roles', 'authorizations', 'credentials', 'zones', 'security', 'audit', 'integration', 'trigger-bindings', 'platform', 'health', 'housekeeping', 'log-backend', 'mail-settings']
+
+// Integration/platform/health/security/housekeeping/log-backend/audit moved out of the
+// standalone Admin nav into their own Settings page (reached via the topbar gear icon) —
+// same RBAC areas (admin.integration, admin.platform, ...) and view components, just a
+// second route prefix onto them. /admin/<section> for these still works unchanged (Zabbix's
+// embedded "Administration > SeyalRun" flyout links straight to those PHP-rendered routes),
+// this is purely an additional, better-organized path for the standalone app.
+export const VALID_SETTINGS_SECTIONS = ['integration', 'platform', 'health', 'security', 'housekeeping', 'log-backend', 'mail-settings', 'audit']
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -24,6 +32,19 @@ const router = createRouter({
       component: () => import('@/views/AssetsView.vue'),
     },
     {
+      path: '/zones',
+      name: 'zones',
+      component: () => import('@/views/ZonesView.vue'),
+    },
+    {
+      // Self-service MFA enrollment — deliberately NOT under /admin or /settings
+      // (those are admin-gated at the router level); reachable by any authenticated
+      // user, same as the credential-reveal MFA check it feeds into.
+      path: '/security',
+      name: 'security-mfa',
+      component: () => import('@/views/SecurityView.vue'),
+    },
+    {
       path: '/admin/:section',
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),
@@ -39,6 +60,23 @@ const router = createRouter({
     {
       path: '/admin',
       redirect: '/admin/users',
+    },
+    {
+      path: '/settings/:section',
+      name: 'settings',
+      component: () => import('@/views/SettingsView.vue'),
+      meta: { requiresAdmin: true },
+      beforeEnter: (to) => {
+        const section = to.params.section as string
+        if (!VALID_SETTINGS_SECTIONS.includes(section)) {
+          return { path: '/settings/integration' }
+        }
+        return true
+      },
+    },
+    {
+      path: '/settings',
+      redirect: '/settings/integration',
     },
     {
       path: '/hosts',
@@ -109,6 +147,19 @@ function areaFor(to: any): string | null {
   if (p.startsWith('/automation')) return 'automation'
   if (p.startsWith('/zbx')) return 'jobs'   // 'Run from Zabbix' console page is gated with jobs
   if (p.startsWith('/admin/')) {
+    const section = (to.params?.section as string) || p.split('/')[2] || ''
+    // Trigger Bindings is its own route/page again. 'admin.zabbix-integration'
+    // is the pre-existing gateway nav area for it (rbac.py _NAV_SEGMENTS ->
+    // GET trigger-bindings) — orphaned since the old ZabbixIntegrationAdmin.vue
+    // page was merged into IntegrationAdmin.vue, now reused for its original
+    // purpose. Without this override, areaFor() derives 'admin.trigger-bindings',
+    // which nothing grants, so the guard bounces everyone to Dashboard.
+    if (section === 'trigger-bindings') return 'admin.zabbix-integration'
+    return section ? `admin.${section}` : null
+  }
+  if (p.startsWith('/settings/')) {
+    // Same admin.* RBAC areas as /admin/<section> — this is just an alternate route
+    // prefix onto the same permission-gated sections, not a new set of areas.
     const section = (to.params?.section as string) || p.split('/')[2] || ''
     return section ? `admin.${section}` : null
   }

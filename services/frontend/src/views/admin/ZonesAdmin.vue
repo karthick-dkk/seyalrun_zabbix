@@ -381,7 +381,7 @@ onMounted(() => {
 }
 
 .gw-health { font-size: 12px; font-weight: 600; white-space: nowrap; }
-.gw-health--ok { color: #3fb950; }
+.gw-health--ok { color: var(--accent); }
 .gw-health--fail { color: var(--danger); cursor: help; }
 .gw-health--testing { color: var(--text2); }
 </style>

@@ -231,12 +231,16 @@
       <div class="modal" style="width:min(440px,94vw)">
         <div class="modal-header">View Secret — {{ reveal.cred?.name || reveal.cred?.username }}<button class="btn btn-sm btn-icon" @click="closeReveal">✕</button></div>
         <div class="modal-body">
-          <!-- Step 1: MFA code (only if user has TOTP enabled) -->
+          <!-- Step 1: MFA code (MFA is mandatory to reveal — see reveal.error if not enabled) -->
           <div v-if="reveal.needCode && !reveal.secret">
-            <p style="font-size:13px;color:var(--text2);margin:0 0 10px">Enter your 6-digit authenticator code to reveal this secret.</p>
+            <p v-if="reveal.mfaMethod === 'email'" style="font-size:13px;color:var(--text2);margin:0 0 10px">
+              Enter the 6-digit code emailed to you.
+              <button class="btn btn-sm" style="margin-left:6px" :disabled="reveal.busy" @click="sendRevealCode">{{ reveal.codeSent ? 'Resend' : 'Send code' }}</button>
+            </p>
+            <p v-else style="font-size:13px;color:var(--text2);margin:0 0 10px">Enter your 6-digit authenticator code to reveal this secret.</p>
             <input v-model="reveal.code" class="fp-input" inputmode="numeric" maxlength="6" placeholder="123456" style="text-align:center;letter-spacing:6px;font-size:18px" @keyup.enter="doReveal" />
           </div>
-          <div v-else-if="!reveal.secret" style="font-size:13px;color:var(--text2)">Revealing…</div>
+          <div v-else-if="!reveal.secret && !reveal.error" style="font-size:13px;color:var(--text2)">Revealing…</div>
 
           <!-- Step 2: revealed secret -->
           <div v-if="reveal.secret">
@@ -548,18 +552,39 @@ function fmtDate(iso?: string | null): string {
   return iso ? new Date(iso).toLocaleString() : '—'
 }
 
-// ── Reveal secret (MFA-gated, Feature 6) ────────────────────────────────────
+// ── Reveal secret (MFA-mandatory — see auth.py::mfa_verify) ─────────────────
 const reveal = reactive<any>({
-  visible: false, cred: null, needCode: false, code: '', secret: null,
+  visible: false, cred: null, needCode: false, mfaMethod: '', codeSent: false, code: '', secret: null,
   blurred: true, countdown: 30, busy: false, error: '', timer: null as any,
 })
 async function openReveal(c: any) {
-  Object.assign(reveal, { visible: true, cred: c, needCode: false, code: '', secret: null, blurred: true, countdown: 30, busy: false, error: '' })
+  Object.assign(reveal, {
+    visible: true, cred: c, needCode: false, mfaMethod: '', codeSent: false,
+    code: '', secret: null, blurred: true, countdown: 30, busy: false, error: '',
+  })
+  let enabled = false
   try {
     const { data } = await api.get('/auth/mfa/status')
-    reveal.needCode = !!data.enabled
-  } catch { reveal.needCode = false }
-  if (!reveal.needCode) doReveal()
+    enabled = !!data.enabled
+    reveal.mfaMethod = data.method || ''
+  } catch { /* treat as not enabled */ }
+  if (!enabled) {
+    reveal.error = 'Enable MFA in Security settings to reveal credentials.'
+    return
+  }
+  reveal.needCode = true
+  if (reveal.mfaMethod === 'email') await sendRevealCode()
+}
+async function sendRevealCode() {
+  reveal.busy = true; reveal.error = ''
+  try {
+    await api.post('/auth/mfa/reveal/request-code')
+    reveal.codeSent = true
+  } catch (e: any) {
+    reveal.error = e?.response?.data?.detail || 'Failed to send code'
+  } finally {
+    reveal.busy = false
+  }
 }
 async function doReveal() {
   reveal.busy = true; reveal.error = ''
@@ -640,46 +665,46 @@ onMounted(() => { loadCredentials(); loadTemplates(); loadHosts() })
 .fp-form { display: flex; flex-direction: column; gap: 10px; }
 .fp-section-head {
   font-size: 10px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.08em; color: #484f58; margin-top: 6px; padding-bottom: 4px;
-  border-bottom: 1px solid #21262d;
+  letter-spacing: 0.08em; color: var(--text2); margin-top: 6px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
 }
 .fp-opt { font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
 .fp-field { display: flex; flex-direction: column; gap: 5px; }
-.fp-label { font-size: 12px; color: #8b949e; font-weight: 500; }
+.fp-label { font-size: 12px; color: var(--text2); font-weight: 500; }
 .fp-input {
-  padding: 7px 10px; background: #161b22; border: 1px solid #30363d;
-  border-radius: 5px; color: #e6edf3; font-size: 13px; outline: none;
+  padding: 7px 10px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--text); font-size: 13px; outline: none;
   width: 100%; box-sizing: border-box;
 }
-.fp-input:focus { border-color: #58a6ff; }
+.fp-input:focus { border-color: var(--accent2); }
 .fp-textarea { resize: vertical; min-height: 100px; font-family: var(--font-mono, monospace); font-size: 11px; }
-.fp-error { font-size: 12px; color: #f85149; padding: 4px 0; }
-.fp-hint { font-size: 11px; color: #484f58; }
+.fp-error { font-size: 12px; color: var(--danger); padding: 4px 0; }
+.fp-hint { font-size: 11px; color: var(--text2); }
 
-.fp-toggle-group { display: flex; background: #161b22; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.fp-toggle-group { display: flex; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .fp-toggle {
   flex: 1; padding: 5px 0; font-size: 12px; font-weight: 500;
-  background: transparent; border: none; color: #484f58; cursor: pointer;
+  background: transparent; border: none; color: var(--text2); cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
-.fp-toggle.active { background: #21262d; color: #e6edf3; }
-.fp-toggle:hover:not(.active) { color: #8b949e; }
+.fp-toggle.active { background: var(--bg2); color: var(--text); }
+.fp-toggle:hover:not(.active) { color: var(--text); }
 
 .fp-checkbox { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.fp-checkbox input[type="checkbox"] { width: 14px; height: 14px; accent-color: #58a6ff; }
-.fp-checkbox-label { font-size: 12px; color: #c9d1d9; }
+.fp-checkbox input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent2); }
+.fp-checkbox-label { font-size: 12px; color: var(--text); }
 
 /* Reveal secret */
 .reveal-row { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
 .reveal-key { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; }
 .reveal-val {
-  display: block; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-  padding: 9px 11px; font-family: var(--font-mono, monospace); font-size: 12px; color: #e6edf3;
+  display: block; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+  padding: 9px 11px; font-family: var(--font-mono, monospace); font-size: 12px; color: var(--text);
   word-break: break-all; white-space: pre-wrap; cursor: pointer; transition: filter 0.15s;
 }
 .reveal-val.blurred { filter: blur(5px); }
 
 /* Rotation history */
 .rot-history { display: flex; flex-direction: column; gap: 4px; }
-.rot-history-row { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 0; border-bottom: 1px solid #21262d; }
+.rot-history-row { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 0; border-bottom: 1px solid var(--border); }
 </style>

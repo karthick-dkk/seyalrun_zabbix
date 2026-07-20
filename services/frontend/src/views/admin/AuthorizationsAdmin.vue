@@ -559,32 +559,32 @@ onMounted(load)
 @media (max-width: 760px)  { .eg-row--cols4 { grid-template-columns: 1fr; } }
 .eg-field { display: flex; flex-direction: column; gap: 4px; }
 .eg-field--wide { flex: 1; min-width: 200px; }
-.eg-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #484f58; }
+.eg-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text2); }
 .eg-opt   { font-weight: 400; text-transform: none; font-size: 10px; letter-spacing: 0; }
-.eg-hint  { font-size: 11px; color: #484f58; }
+.eg-hint  { font-size: 11px; color: var(--text2); }
 .eg-error { font-size: 12px; color: var(--danger); padding: 4px 0; }
 .eg-bulk-note {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; background: #1e2d40; border: 1px solid #1f3a5f; border-radius: 6px;
-  font-size: 12px; color: #58a6ff;
+  padding: 8px 12px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.3); border-radius: 6px;
+  font-size: 12px; color: var(--accent2);
 }
-.bulk-dot { width: 7px; height: 7px; border-radius: 50%; background: #58a6ff; box-shadow: 0 0 5px #58a6ff; flex-shrink: 0; }
+.bulk-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent2); box-shadow: 0 0 5px var(--accent2); flex-shrink: 0; }
 
 /* ── Sections (checkbox columns) ────────────────────────────────────────────── */
 .eg-section { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; display: flex; flex-direction: column; background: var(--bg2); }
 .eg-section-head {
   padding: 8px 12px; background: rgba(0,0,0,0.15); border-bottom: 1px solid var(--border);
-  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #8b949e;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text2);
   display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0;
 }
 .eg-toggle-group { display: flex; background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
 .eg-toggle {
   padding: 3px 10px; font-size: 11px; font-weight: 500;
-  background: transparent; border: none; color: #484f58; cursor: pointer;
+  background: transparent; border: none; color: var(--text2); cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
-.eg-toggle.active { background: #21262d; color: #e6edf3; }
-.eg-toggle:hover:not(.active) { color: #8b949e; }
+.eg-toggle.active { background: var(--bg2); color: var(--text); }
+.eg-toggle:hover:not(.active) { color: var(--text); }
 
 /* ── Checkbox grid ──────────────────────────────────────────────────────────── */
 .check-grid { padding: 6px; overflow-y: auto; max-height: 260px; display: grid; grid-template-columns: 1fr; align-content: start; gap: 3px; }

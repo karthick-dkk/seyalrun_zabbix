@@ -1,6 +1,7 @@
 <?php declare(strict_types = 1);
 /**
- * @var array $data  ['iframe_url' => string|null, 'seyalrun_url' => string, 'configured' => bool]
+ * @var array $data  ['iframe_url' => string|null, 'seyalrun_url' => string, 'configured' => bool,
+ *                     'version' => string, 'website_url' => string]
  */
 
 if (!$data['configured']) {
@@ -21,6 +22,11 @@ if (!$data['configured']) {
 		. '" class="seyalrun-iframe" allow="clipboard-read; clipboard-write"></iframe>'
 		. '</div>';
 }
+
+echo '<div class="seyalrun-footer">'
+	. '<a href="' . htmlspecialchars($data['website_url'], ENT_QUOTES) . '" target="_blank" rel="noopener">SeyalRun</a>'
+	. '<span>v' . htmlspecialchars($data['version'], ENT_QUOTES) . '</span>'
+	. '</div>';
 ?>
 <style>
 	/* Native full-height feel — no Zabbix footer, no dark band.
@@ -40,9 +46,26 @@ if (!$data['configured']) {
 	 * see SeyalRun — never Zabbix's wrapper background or footer. */
 	.wrapper > footer[role="contentinfo"] { display: none !important; }
 
-	.seyalrun-embed-wrap { flex: 1 1 auto; display: flex; min-height: 0; width: 100%; }
+	/* min-height (not flex-basis) guarantees the iframe is always at least a
+	 * full viewport tall — it no longer shrinks to make room for the footer
+	 * sibling below. Short pages: the footer sits right after this, visible
+	 * with no scroll. Tall pages: same as Zabbix's own footer pattern — the
+	 * page grows past one viewport and the footer only appears once you
+	 * scroll down to it, exactly like Zabbix's native "Zabbix X.Y.Z ©
+	 * ... Zabbix SIA" footer bar (which we hide below and replace the
+	 * content of, in this same spot, in SeyalRun's own style). */
+	.seyalrun-embed-wrap { flex: 1 1 auto; min-height: 100vh; display: flex; width: 100%; }
 	.seyalrun-iframe { flex: 1 1 auto; width: 100%; min-height: 400px; border: 0; }
 
 	.seyalrun-embed-wrap--error { display: flex; align-items: flex-start; justify-content: center; padding-top: 60px; }
 	.seyalrun-error { max-width: 560px; padding: 16px 18px; border-radius: 4px; background: #fef6f6; border: 1px solid #e45959; color: #7a2020; font-size: 13px; line-height: 1.6; }
+
+	/* Same footer bar Zabbix itself uses (small muted text, right-aligned,
+	 * underlined link) — SeyalRun branding instead of Zabbix's. It sits
+	 * OUTSIDE the iframe on Zabbix's own page background (light, in
+	 * Zabbix's default theme), so it needs its own explicit dark background
+	 * to read as part of the app rather than a mismatched Zabbix element. */
+	.seyalrun-footer { flex: 0 0 auto; margin-top: auto; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 10px 20px; font-size: 11px; color: #8b95ae; background: #0a0e1a !important; }
+	.seyalrun-footer a { color: #8b95ae; text-decoration: underline; }
+	.seyalrun-footer a:hover { color: #58a6ff; }
 </style>

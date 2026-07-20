@@ -27,6 +27,7 @@ export interface SessionUser {
   // terminal deep-link; absent for every ordinary login.
   kiosk?: boolean
   kiosk_host_id?: string | null
+  mfa_method?: string | null
 }
 
 // Frontend mirror of the gateway RBAC matrix — used only to hide nav/tabs the
@@ -39,6 +40,7 @@ const AREA_ROLES: Record<string, string[]> = {
   dashboard:                ['superadmin', 'admin', 'support'],
   hosts:                    ['superadmin', 'admin', 'support', 'user'],
   assets:                   ['superadmin', 'admin', 'support'],
+  zones:                    ['superadmin', 'admin', 'support'],
   terminal:                 ['superadmin', 'admin', 'support', 'user'],
   sessions:                 ['superadmin', 'admin', 'support', 'user'],
   recordings:               ['superadmin', 'admin', 'support', 'user'],
@@ -53,10 +55,13 @@ const AREA_ROLES: Record<string, string[]> = {
   'admin.automation':       ['superadmin', 'admin', 'support'],
   'admin.zabbix-integration': ['superadmin', 'admin', 'support'],
   'admin.integration':      ['superadmin'],
+  'admin.platform':         ['superadmin'],
   'admin.health':           ['superadmin', 'admin', 'support'],
   'admin.housekeeping':     ['superadmin'],
   'admin.log-backend':      ['superadmin'],
+  'admin.mail-settings':    ['superadmin'],
   'admin.audit':            ['superadmin', 'admin'],
+  'security.mfa':           ['superadmin', 'admin'],
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -166,10 +171,19 @@ export const useAuthStore = defineStore('auth', {
     // kioskTarget: the raw zbx_host/host_id from a Zabbix terminal deep-link that
     // forced this login. It's only a hint — identity-service independently resolves
     // and validates it server-side before binding anything into the issued token.
+    // Returns { mfaRequired, mfaMethod } instead of resolving straight to a full
+    // session when the account has MFA enabled — the token is already applied
+    // (it's valid for verifyMfaLogin/resendMfaCode) but nav is deliberately NOT
+    // loaded yet, since api-gateway blocks every other path until verified.
     async login(username: string, password: string, kioskTarget?: string) {
       const { data } = await api.post('/auth/login', { username, password, kiosk_target: kioskTarget })
       this._applyToken(data.access_token, data.user)
-      await this.loadNav()
+      const gate = {
+        mfaRequired: !!data.mfa_required, mfaMethod: data.mfa_method as string,
+        mfaSetupRequired: !!data.mfa_setup_required, needsSetupWizard: !!data.needs_setup_wizard,
+      }
+      if (!gate.mfaRequired && !gate.mfaSetupRequired) await this.loadNav()
+      return gate
     },
 
     // Forced first-login rotation: the gateway 403s everything except this
@@ -183,13 +197,53 @@ export const useAuthStore = defineStore('auth', {
         kiosk_target: kioskTarget,
       })
       this._applyToken(data.access_token, data.user)
-      await this.loadNav()
+      const gate = {
+        mfaRequired: !!data.mfa_required, mfaMethod: data.mfa_method as string,
+        mfaSetupRequired: !!data.mfa_setup_required, needsSetupWizard: !!data.needs_setup_wizard,
+      }
+      if (!gate.mfaRequired && !gate.mfaSetupRequired) await this.loadNav()
+      return gate
     },
 
+    // Completes the login-time MFA gate — mints a clean, fully-usable session.
+    // Still may need the setup wizard next (independent of the MFA gate).
+    async verifyMfaLogin(code: string) {
+      const { data } = await api.post('/auth/mfa/verify-login', { code })
+      this._applyToken(data.access_token, data.user)
+      await this.loadNav()
+      return { needsSetupWizard: !!data.needs_setup_wizard }
+    },
+
+    async resendMfaCode() {
+      await api.post('/auth/mfa/resend')
+    },
+
+    // /auth/mfa/enable now always re-mints a clean session (see auth.py) — matters
+    // for the group-enforced enrollment path, harmless for voluntary self-service
+    // enrollment. Callers (SecurityView.vue, LoginView.vue) apply the returned
+    // token via this, and check the wizard flag (relevant when enrollment was
+    // itself the last gate — the forced-enrollment path in LoginView.vue).
+    async applyMfaEnableResult(accessToken: string, user: SessionUser, needsSetupWizard: boolean) {
+      this._applyToken(accessToken, user)
+      await this.loadNav()
+      return { needsSetupWizard: !!needsSetupWizard }
+    },
+
+    async completeSetupWizard() {
+      await api.post('/auth/setup/complete')
+    },
+
+    // Zabbix SSO is a parallel credential path, not exempt from a user's own MFA
+    // setting — same mfa_required shape as login()/changePassword().
     async exchangeSSO(ssoCode: string) {
       const { data } = await api.post('/auth/sso-exchange', { sso_code: ssoCode })
       this._applyToken(data.access_token, data.user)
-      await this.loadNav()
+      const gate = {
+        mfaRequired: !!data.mfa_required, mfaMethod: data.mfa_method as string,
+        mfaSetupRequired: !!data.mfa_setup_required, needsSetupWizard: !!data.needs_setup_wizard,
+      }
+      if (!gate.mfaRequired && !gate.mfaSetupRequired) await this.loadNav()
+      return gate
     },
 
     // Instant server-side revocation, not just forgetting the token

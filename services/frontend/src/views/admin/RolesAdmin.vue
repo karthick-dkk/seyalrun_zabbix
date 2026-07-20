@@ -46,6 +46,10 @@
             <input type="checkbox" v-model="form.all" :disabled="modal.readonly" />
             <span><b>Full / all-admin access</b> (every module + all hosts + reveal — like superadmin)</span>
           </label>
+          <label class="opt-row" v-if="!form.all">
+            <input type="checkbox" v-model="form.mfa" :disabled="modal.readonly" />
+            <span><b>Allow MFA enrollment</b> (lets members of this role enable Authenticator/Email MFA)</span>
+          </label>
           <template v-if="!form.all">
             <div class="fp-section-head">Module access</div>
             <div class="area-note">
@@ -113,7 +117,7 @@ const saving = ref(false)
 const error = ref('')
 
 const modal = reactive({ open: false, title: '', editing: false, readonly: false, id: '' })
-const form = reactive<any>({ name: '', description: '', all: false, all_hosts: false, reveal: false, areas: {} as Record<string, string> })
+const form = reactive<any>({ name: '', description: '', all: false, all_hosts: false, reveal: false, mfa: false, areas: {} as Record<string, string> })
 
 function blankAreas() { const o: Record<string, string> = {}; AREAS.forEach(a => o[a.key] = 'none'); return o }
 
@@ -145,7 +149,7 @@ function permsToAreas(p: any): Record<string, string> {
 
 function openCreate() {
   Object.assign(modal, { open: true, title: 'Create Custom Role', editing: false, readonly: false, id: '' })
-  Object.assign(form, { name: '', description: '', all: false, all_hosts: false, reveal: false, areas: blankAreas() })
+  Object.assign(form, { name: '', description: '', all: false, all_hosts: false, reveal: false, mfa: false, areas: blankAreas() })
   error.value = ''
 }
 function openView(r: any) {
@@ -154,13 +158,14 @@ function openView(r: any) {
   Object.assign(form, {
     name: r.name, description: r.description || '',
     all: !!r.permissions?.all, all_hosts: !!r.permissions?.all_hosts, reveal: !!r.permissions?.reveal,
+    mfa: !!r.permissions?.mfa,
     areas: permsToAreas(r.permissions || {}),
   })
   error.value = ''
 }
 
 function buildPerms(): any {
-  if (form.all) return { all: true, reveal: true, all_hosts: true }
+  if (form.all) return { all: true, reveal: true, all_hosts: true, mfa: true }
   const read: string[] = [], write: string[] = []
   let reveal = false, all_hosts = false
   for (const a of AREAS) {
@@ -172,7 +177,7 @@ function buildPerms(): any {
     } else if (lvl === 'write') write.push(...a.segs)
     else if (lvl === 'read') read.push(...a.segs)
   }
-  return { read, write, reveal, all_hosts }
+  return { read, write, reveal, all_hosts, mfa: !!form.mfa }
 }
 
 async function save() {
@@ -204,21 +209,21 @@ onMounted(load)
 
 <style scoped>
 .fp-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
-.fp-label { font-size: 12px; color: #8b949e; font-weight: 500; }
-.fp-input { padding: 7px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 5px; color: #e6edf3; font-size: 13px; outline: none; }
+.fp-label { font-size: 12px; color: var(--text2); font-weight: 500; }
+.fp-input { padding: 7px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 13px; outline: none; }
 .fp-input:disabled { opacity: 0.6; }
-.fp-error { font-size: 12px; color: #f85149; padding: 6px 0; }
-.fp-section-head { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #6e7681; margin: 14px 0 8px; }
-.opt-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #c9d1d9; padding: 5px 0; cursor: pointer; }
-.opt-row input { accent-color: #58a6ff; width: 15px; height: 15px; }
-.area-note { font-size: 11px; color: #8b949e; margin: 0 0 8px; line-height: 1.5; }
-.cap-hint { font-style: normal; font-size: 10px; color: #6e7681; margin-left: 6px; }
-.area-grid { border: 1px solid #21262d; border-radius: 8px; overflow: hidden; }
+.fp-error { font-size: 12px; color: var(--danger); padding: 6px 0; }
+.fp-section-head { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text2); margin: 14px 0 8px; }
+.opt-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); padding: 5px 0; cursor: pointer; }
+.opt-row input { accent-color: var(--accent2); width: 15px; height: 15px; }
+.area-note { font-size: 11px; color: var(--text2); margin: 0 0 8px; line-height: 1.5; }
+.cap-hint { font-style: normal; font-size: 10px; color: var(--text2); margin-left: 6px; }
+.area-grid { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .area-head, .area-row { display: grid; grid-template-columns: 1fr 52px 52px 52px 52px; align-items: center; }
-.area-head { background: #0d1117; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6e7681; padding: 6px 12px; }
+.area-head { background: var(--bg3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text2); padding: 6px 12px; }
 .area-head span:not(:first-child), .area-radio { text-align: center; }
-.area-row { padding: 5px 12px; border-top: 1px solid #161b22; }
-.area-name { font-size: 12.5px; color: #c9d1d9; }
+.area-row { padding: 5px 12px; border-top: 1px solid var(--border); }
+.area-name { font-size: 12.5px; color: var(--text); }
 .area-radio { display: flex; justify-content: center; }
-.area-radio input { accent-color: #58a6ff; cursor: pointer; }
+.area-radio input { accent-color: var(--accent2); cursor: pointer; }
 </style>

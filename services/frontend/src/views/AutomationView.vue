@@ -10,6 +10,7 @@
         </div>
         <div style="display:flex;gap:8px;align-items:center">
           <button v-if="auth.isAdminOrSupport && autoTab === 'playbooks'" class="btn btn-primary" @click="openCreate">+ New Playbook</button>
+          <button v-if="auth.isAdminOrSupport && autoTab === 'playbooks'" class="btn" @click="openCreateChain">+ New Chain</button>
           <button v-if="auth.isAdminOrSupport && autoTab === 'templates'" class="btn btn-primary" @click="openCreateTemplate">+ New Template</button>
           <button v-if="auth.isAdminOrSupport && autoTab === 'schedules'" class="btn btn-primary" @click="openCreateSchedule">+ New Schedule</button>
           <button class="btn btn-icon" @click="loadAll" title="Refresh">↺</button>
@@ -81,11 +82,11 @@
             </thead>
             <tbody>
               <tr v-for="t in filteredPlaybookTemplates" :key="t.id">
-                <td style="font-weight:600">{{ t.action_type === 'bash_script' ? '⌨' : '📜' }} {{ t.name }}
+                <td style="font-weight:600"><span class="row-type-icon" v-html="actionTypeIcon(t.action_type)" /> {{ t.name }}
                   <span v-if="t.default_params?.use_sudo" class="badge badge-orange" style="font-size:9px;margin-left:4px">sudo</span>
                   <span v-if="t.quick_action" class="badge badge-blue" style="font-size:9px;margin-left:4px">Quick Action</span>
                 </td>
-                <td><span class="badge" :class="t.action_type === 'bash_script' ? 'badge-blue' : 'badge-green'" style="font-size:10px">{{ t.action_type === 'bash_script' ? 'Bash Script' : 'Ansible Playbook' }}</span></td>
+                <td><span class="badge" :class="actionTypeBadgeClass(t.action_type)" style="font-size:10px">{{ actionTypeLabel(t.action_type) }}</span></td>
                 <td style="color:var(--text2);font-size:13px">{{ projectName(t.project_id) || '—' }}</td>
                 <td style="color:var(--text2);font-size:12px">{{ t.script_content ? `${t.script_content.split('\n').length} lines` : '—' }}</td>
                 <td style="color:var(--text2);font-size:12px">{{ userName(t.created_by) || '—' }}</td>
@@ -108,11 +109,11 @@
         <div v-else class="playbook-grid">
           <div v-for="t in filteredPlaybookTemplates" :key="t.id" class="playbook-card">
             <div class="pb-header">
-              <div class="pb-icon">{{ t.action_type === 'bash_script' ? '⌨' : '📜' }}</div>
+              <div class="pb-icon" v-html="actionTypeIcon(t.action_type)" />
               <div class="pb-meta">
                 <div class="pb-name">{{ t.name }}</div>
                 <div class="pb-type-badge">
-                  <span class="badge" :class="t.action_type === 'bash_script' ? 'badge-blue' : 'badge-green'" style="font-size:10px">{{ t.action_type === 'bash_script' ? 'Bash Script' : 'Ansible Playbook' }}</span>
+                  <span class="badge" :class="actionTypeBadgeClass(t.action_type)" style="font-size:10px">{{ actionTypeLabel(t.action_type) }}</span>
                   <span v-if="t.default_params?.use_sudo" class="badge badge-orange" style="font-size:10px;margin-left:4px">sudo</span>
                   <span v-if="t.quick_action" class="badge badge-blue" style="font-size:10px;margin-left:4px">Quick Action</span>
                 </div>
@@ -277,7 +278,11 @@
             <div v-if="!allCredentials.length" style="font-size:12px;color:var(--text2);margin-top:4px">No credentials available (admin-managed).</div>
           </div>
 
-          <div class="run-grid">
+          <div v-if="runDlg.template?.action_type === 'chain'" class="form-group" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px">🔗 {{ (runDlg.template.chain_steps || []).length }} step{{ (runDlg.template.chain_steps || []).length === 1 ? '' : 's' }}</div>
+            <div style="font-size:12px;color:var(--text2)">Each step runs against its own already-configured hosts and credential — nothing to select here.</div>
+          </div>
+          <div v-else class="run-grid">
             <!-- ── Targets column ─────────────────────────────────────────── -->
             <div class="run-col">
               <div class="form-group">
@@ -367,7 +372,18 @@
             </div>
           </div>
 
-          <div class="form-group" style="margin-top:8px">
+          <template v-if="runDlg.template?.action_type !== 'chain' && runDlg.template?.survey_schema?.fields?.length">
+            <div v-for="f in runDlg.template.survey_schema.fields" :key="f.name" class="form-group" style="margin-top:8px">
+              <label class="form-label">{{ f.prompt || f.name }} <span style="color:var(--danger)">*</span></label>
+              <select v-if="f.type === 'dropdown'" v-model="runDlg.variableValues[f.name]" class="input">
+                <option v-for="opt in (f.options || [])" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+              <input v-else v-model="runDlg.variableValues[f.name]" class="input" :placeholder="f.default || ''" />
+              <div v-if="!(runDlg.variableValues[f.name] || '').trim()" style="color:var(--danger);font-size:12px;margin-top:4px">Required — this playbook won't run without it.</div>
+              <div v-else-if="f.type === 'string' && f.validation && !runVarPasses(f)" style="color:var(--danger);font-size:12px;margin-top:4px">Doesn't match the required pattern.</div>
+            </div>
+          </template>
+          <div v-else-if="runDlg.template?.action_type !== 'chain'" class="form-group" style="margin-top:8px">
             <label class="form-label">Extra Variables <span style="color:var(--text2);font-weight:400">(JSON, optional)</span></label>
             <textarea
               v-model="runDlg.extraVars"
@@ -378,11 +394,23 @@
             ></textarea>
             <div v-if="runDlg.extraVarsError" style="color:var(--danger);font-size:12px;margin-top:4px">{{ runDlg.extraVarsError }}</div>
           </div>
+          <div v-if="runDlg.template?.action_type === 'ansible_playbook'" class="form-group" style="margin-top:8px">
+            <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" v-model="runDlg.dryRun" style="accent-color:#58a6ff" />
+              Dry run <span style="color:var(--text2);font-weight:400">(--check --diff — simulates without applying changes)</span>
+            </label>
+          </div>
+          <div v-if="runDlg.template?.survey_schema?.confirmation_enabled" class="confirm-gate">
+            <div class="confirm-gate-text">{{ runDlg.template.survey_schema.confirmation_text }}</div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;cursor:pointer">
+              <input type="checkbox" v-model="runDlg.confirmed" style="accent-color:#58a6ff" /> I understand, run this job
+            </label>
+          </div>
           <div v-if="runDlg.error" style="color:var(--danger);font-size:13px;margin-top:4px;padding:10px;background:rgba(248,81,73,0.08);border-radius:6px;border:1px solid rgba(248,81,73,0.3)">{{ runDlg.error }}</div>
         </div>
         <div class="modal-footer">
           <button class="btn" @click="runDlg.visible = false">Cancel</button>
-          <button class="btn btn-primary" :disabled="runDlg.running" @click="submitRun">
+          <button class="btn btn-primary" :disabled="runDlg.running || surveyFieldsInvalid || (runDlg.template?.survey_schema?.confirmation_enabled && !runDlg.confirmed)" @click="submitRun">
             {{ runDlg.running ? 'Starting…' : '▶ Run Now' }}
           </button>
         </div>
@@ -391,12 +419,17 @@
 
     <!-- ── Create / Edit Playbook Modal ──────────────────────────────────── -->
     <div v-if="editDlg.visible" class="modal-overlay" @click.self="editDlg.visible = false">
-      <div class="modal modal--lg">
+      <div class="modal modal--full">
         <div class="modal-header">
           <div style="font-size:15px;font-weight:700">{{ editDlg.isEdit ? 'Edit Job Template' : 'New Job Template' }}</div>
           <button class="btn btn-sm btn-icon" @click="editDlg.visible = false">✕</button>
         </div>
-        <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+        <!-- Two-pane, VS Code-style layout: a fixed-width fields sidebar on the left (its
+             own independent scroll — Runtime Variables/Confirmation can grow arbitrarily as
+             rows are added without ever competing with the code editor for space) and the
+             code editor filling the entire right side, the dominant element. -->
+        <div class="modal-body" style="display:flex;flex-direction:row;padding:0;overflow:hidden;position:relative">
+          <div v-if="!codeFullscreen" class="modal-fields-scroll">
           <div class="form-group">
             <label class="form-label">Type</label>
             <div class="radio-row">
@@ -457,20 +490,133 @@
               <select v-model="editDlg.form.enabled" class="input"><option :value="true">Active</option><option :value="false">Disabled</option></select>
             </div>
           </div>
-          <div v-if="editDlg.form.action_type === 'bash_script'" class="form-group">
+          <div class="form-group">
+            <label class="form-label">Timeout (seconds) <span style="color:var(--text2);font-weight:400">— optional, can only tighten the platform ceiling ({{ platformTimeoutCeiling }}s), never exceed it</span></label>
+            <input v-model.number="editDlg.form.timeoutSeconds" type="number" min="1" class="input" placeholder="e.g. 900 (blank = platform default)" />
+          </div>
+          <div class="inline-form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">Retry on failure <span style="color:var(--text2);font-weight:400">(0 = no retries)</span></label>
+              <input v-model.number="editDlg.form.retryCount" type="number" min="0" max="10" class="input" />
+            </div>
+            <div class="form-group" style="flex:1" v-if="editDlg.form.retryCount > 0">
+              <label class="form-label">Retry delay (seconds)</label>
+              <input v-model.number="editDlg.form.retryDelaySeconds" type="number" min="1" class="input" />
+            </div>
+            <div class="form-group" style="flex:1" v-if="editDlg.form.action_type === 'bash_script'">
+              <label class="form-label">Max parallel hosts <span style="color:var(--text2);font-weight:400">(1 = sequential)</span></label>
+              <input v-model.number="editDlg.form.maxParallel" type="number" min="1" class="input" />
+            </div>
+            <div class="form-group" style="flex:1" v-else>
+              <label class="form-label">Forks <span style="color:var(--text2);font-weight:400">(blank = Ansible default, 5)</span></label>
+              <input v-model.number="editDlg.form.forks" type="number" min="1" class="input" placeholder="5" />
+            </div>
+          </div>
+          <div class="inline-form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label"><input type="checkbox" v-model="editDlg.form.requiresApproval" style="margin-right:6px;accent-color:#58a6ff" />Requires approval before running</label>
+            </div>
+            <div class="form-group" style="flex:1" v-if="editDlg.form.requiresApproval">
+              <label class="form-label">Approver role</label>
+              <select v-model="editDlg.form.approverRole" class="input">
+                <option value="admin">Admin or above</option>
+                <option value="superadmin">Superadmin only</option>
+              </select>
+            </div>
+          </div>
+          <div v-if="editDlg.form.action_type === 'bash_script' && !editDlg.form.surveyFields.length" class="form-group">
             <label class="form-label">Options / Arguments</label>
             <input v-model="editDlg.form.script_args" class="input" placeholder="e.g. -v --dry-run (passed to the script as $1, $2, … — quote args with spaces)" />
           </div>
+          <div v-else-if="editDlg.form.action_type === 'bash_script'" style="font-size:11.5px;color:var(--text2)">
+            Positional args ($1, $2, …) are built automatically from Runtime Variables below, in order — remove all variables to go back to typing them here directly.
+          </div>
 
-          <!-- ── Code (last): the full code editor ────────────────────────── -->
+          <!-- ── Runtime Variables — asked for at Run time, same fields as Zabbix's own
+               Script "user input": a name (bash: → $1/$2/… in order; ansible: extra-var
+               key), an input prompt, String or Dropdown, a default, and (String only) a
+               validation regex with a live tester. ─────────────────────────────────── -->
           <div class="form-group">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <label class="form-label" style="margin:0">Runtime Variables <span style="color:var(--text2);font-weight:400">— asked for at Run time</span></label>
+              <button type="button" class="btn btn-sm" @click="addSurveyField">+ Add Variable</button>
+            </div>
+            <div v-if="!editDlg.form.surveyFields.length" style="font-size:12px;color:var(--text2)">
+              None — {{ editDlg.form.action_type === 'bash_script' ? 'the script runs with the Options/Arguments above, if any.' : 'the playbook runs with no extra vars beyond what’s configured here.' }}
+            </div>
+            <div v-for="(f, i) in editDlg.form.surveyFields" :key="i" class="survey-field-row">
+              <div class="inline-form-row">
+                <div class="form-group" style="flex:0 0 130px;min-width:0">
+                  <label class="form-label">Name{{ editDlg.form.action_type === 'bash_script' ? ` (→ $${i + 1})` : '' }}</label>
+                  <input v-model="f.name" class="input" placeholder="e.g. IP" />
+                </div>
+                <div class="form-group" style="flex:0 0 260px">
+                  <label class="form-label">Input prompt</label>
+                  <input v-model="f.prompt" class="input" placeholder="e.g. Target IP address" />
+                </div>
+                <div class="form-group" style="flex:0 0 auto">
+                  <label class="form-label">Input type</label>
+                  <div class="radio-row">
+                    <label class="radio-opt" :class="{ active: f.type === 'string' }"><input type="radio" v-model="f.type" value="string" /> String</label>
+                    <label class="radio-opt" :class="{ active: f.type === 'dropdown' }"><input type="radio" v-model="f.type" value="dropdown" /> Dropdown</label>
+                  </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-icon" title="Remove variable" style="align-self:flex-end" @click="editDlg.form.surveyFields.splice(i, 1)">✕</button>
+              </div>
+              <div class="inline-form-row">
+                <div v-if="f.type === 'string'" class="form-group" style="flex:0 0 200px;min-width:0">
+                  <label class="form-label">Default input string</label>
+                  <input v-model="f.default" class="input" placeholder="optional" />
+                </div>
+                <div v-else class="form-group" style="flex:0 0 260px">
+                  <label class="form-label">Options <span style="color:var(--text2);font-weight:400">(comma-separated; first is the default)</span></label>
+                  <input v-model="f.options" class="input" placeholder="e.g. staging, production" />
+                </div>
+                <div v-if="f.type === 'string'" class="form-group" style="flex:0 0 320px">
+                  <label class="form-label">Input validation rule <span style="color:var(--text2);font-weight:400">(regex, optional)</span></label>
+                  <div style="display:flex;gap:6px">
+                    <input v-model="f.validation" class="input" placeholder="e.g. ^[0-9.]+$" />
+                    <button type="button" class="btn btn-sm" @click="f._testing = !f._testing">Test user input</button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="f._testing" class="survey-field-tester">
+                <input v-model="f._testValue" class="input" style="flex:0 0 200px" placeholder="Try a value…" />
+                <span v-if="f._testValue" :class="testFieldPasses(f) ? 'test-pass' : 'test-fail'">{{ testFieldPasses(f) ? '✓ matches' : '✕ does not match' }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Confirmation — shown at Run time before the job is allowed to start ── -->
+          <div class="form-group">
+            <label class="form-label"><input type="checkbox" v-model="editDlg.form.confirmationEnabled" style="margin-right:6px;accent-color:#58a6ff" />Enable confirmation</label>
+            <div v-if="editDlg.form.confirmationEnabled" style="margin-top:8px;display:flex;gap:6px;align-items:flex-start">
+              <textarea v-model="editDlg.form.confirmationText" class="input" rows="2" placeholder="e.g. This restarts prod nginx — proceed?" style="flex:1"></textarea>
+              <button type="button" class="btn btn-sm" @click="confirmTesting = !confirmTesting">Test confirmation</button>
+            </div>
+            <div v-if="confirmTesting && editDlg.form.confirmationEnabled" class="confirm-preview">
+              <div class="confirm-preview-text">{{ editDlg.form.confirmationText || '(empty — nothing will show at Run time)' }}</div>
+            </div>
+          </div>
+          <div v-if="editDlg.error" style="color:var(--danger);font-size:13px;padding:10px;background:rgba(248,81,73,0.08);border-radius:6px;border:1px solid rgba(248,81,73,0.3)">{{ editDlg.error }}</div>
+          </div>
+
+          <!-- ── Code — the dominant right pane, VS Code-style. Fullscreen mode absolutely
+               positions it over the whole modal-body (header/footer with Save stay visible)
+               and hides the fields sidebar, for distraction-free editing of a long script. -->
+          <div class="form-group code-block-max" :class="{ 'code-block-fullscreen': codeFullscreen }">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
               <label class="form-label" style="margin:0">{{ editDlg.form.action_type === 'bash_script' ? 'Script' : 'Inline Playbook YAML' }}</label>
-              <button type="button" class="btn btn-sm" :disabled="githubImport.loading" @click="githubImport.visible = true">
-                {{ githubImport.loading ? 'Importing…' : '⇩ Import from GitHub' }}
-              </button>
+              <div style="display:flex;gap:8px">
+                <button type="button" class="btn btn-sm" :title="codeFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="codeFullscreen = !codeFullscreen">
+                  {{ codeFullscreen ? '⤡ Exit Fullscreen' : '⤢ Fullscreen' }}
+                </button>
+                <button type="button" class="btn btn-sm" :disabled="githubImport.loading" @click="githubImport.visible = true">
+                  {{ githubImport.loading ? 'Importing…' : '⇩ Import from GitHub' }}
+                </button>
+              </div>
             </div>
-            <div class="code-editor-wrap">
+            <div class="code-editor-wrap code-editor-wrap--max">
               <div ref="codeGutterEl" class="code-gutter">{{ codeLineNumbers }}</div>
               <textarea
                 ref="codeTextareaEl"
@@ -480,6 +626,7 @@
                 :placeholder="editDlg.form.action_type === 'bash_script' ? '#!/bin/bash\nset -e\nsystemctl restart nginx' : '---\n- hosts: all\n  tasks:\n    - name: Check connectivity\n      ping:'"
                 spellcheck="false"
                 @scroll="syncGutterScroll"
+                @keydown.esc="codeFullscreen = false"
               ></textarea>
             </div>
             <div v-if="editDlg.form.imported_from" class="code-source-note">Imported from <a :href="editDlg.form.imported_from" target="_blank" rel="noopener">{{ editDlg.form.imported_from }}</a></div>
@@ -488,12 +635,65 @@
             </div>
             <div v-else-if="editDlg.form.script_content.trim()" class="lint-ok">{{ editDlg.form.action_type === 'bash_script' ? '✓ No unmatched quotes, brackets, or block keywords found' : '✓ Valid YAML — parses as a list of plays' }}</div>
           </div>
-
-          <div v-if="editDlg.error" style="color:var(--danger);font-size:13px;padding:10px;background:rgba(248,81,73,0.08);border-radius:6px;border:1px solid rgba(248,81,73,0.3)">{{ editDlg.error }}</div>
         </div>
         <div class="modal-footer">
           <button class="btn" @click="editDlg.visible = false">Cancel</button>
           <button class="btn btn-primary" :disabled="editDlg.saving" @click="saveTemplate">{{ editDlg.saving ? 'Saving…' : (editDlg.isEdit ? 'Save' : 'Create') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Chain editor (New Chain / Edit Chain) ────────────────────────── -->
+    <div v-if="chainDlg.visible" class="modal-overlay" @click.self="chainDlg.visible = false">
+      <div class="modal modal--lg">
+        <div class="modal-header">
+          <div style="font-size:15px;font-weight:700">🔗 {{ chainDlg.isEdit ? 'Edit Chain' : 'New Chain' }}</div>
+          <button class="btn btn-sm btn-icon" @click="chainDlg.visible = false">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Name <span style="color:var(--danger)">*</span></label>
+            <input v-model="chainDlg.form.name" class="input" placeholder="e.g. Provision + Configure + Verify" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <input v-model="chainDlg.form.description" class="input" placeholder="What this chain does, optional" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Project <span style="color:var(--danger)">*</span></label>
+            <select v-model="chainDlg.form.project_id" class="input">
+              <option value="">— Select Project —</option>
+              <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </div>
+
+          <div class="form-group" style="margin-top:8px">
+            <label class="form-label">Steps <span style="color:var(--text2);font-weight:400">— runs top to bottom, each step is an existing playbook/script run with its own configured hosts &amp; credential</span></label>
+            <div v-if="!chainDlg.form.steps.length" style="font-size:12px;color:var(--text2);padding:10px 0">No steps yet — add one below.</div>
+            <div v-for="(step, i) in chainDlg.form.steps" :key="i" class="chain-step-row">
+              <span class="chain-step-num">{{ i + 1 }}</span>
+              <span class="row-type-icon" v-html="actionTypeIcon(stepTemplateById(step.template_id)?.action_type || '')" />
+              <span class="chain-step-name">{{ stepTemplateById(step.template_id)?.name || '(deleted template)' }}</span>
+              <label class="chain-step-cof" title="If this step fails, keep running the remaining steps instead of stopping the chain">
+                <input type="checkbox" v-model="step.continue_on_failure" /> Continue on failure
+              </label>
+              <button class="btn-pill btn-pill-outline" style="font-size:11px" :disabled="i === 0" @click="moveChainStep(i, -1)">↑</button>
+              <button class="btn-pill btn-pill-outline" style="font-size:11px" :disabled="i === chainDlg.form.steps.length - 1" @click="moveChainStep(i, 1)">↓</button>
+              <button class="btn-pill btn-pill-outline" style="font-size:11px;color:var(--danger);border-color:var(--danger)" @click="chainDlg.form.steps.splice(i, 1)">✕</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Add step</label>
+            <select v-model="chainDlg.addStepId" class="input" @change="addChainStep">
+              <option value="">— Select a playbook or script to add —</option>
+              <option v-for="t in chainableTemplates" :key="t.id" :value="t.id">{{ t.name }} ({{ actionTypeLabel(t.action_type) }})</option>
+            </select>
+          </div>
+          <div v-if="chainDlg.error" style="color:var(--danger);font-size:13px;margin-top:4px;padding:10px;background:rgba(248,81,73,0.08);border-radius:6px;border:1px solid rgba(248,81,73,0.3)">{{ chainDlg.error }}</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" @click="chainDlg.visible = false">Cancel</button>
+          <button class="btn btn-primary" :disabled="chainDlg.saving" @click="saveChain">{{ chainDlg.saving ? 'Saving…' : (chainDlg.isEdit ? 'Save' : 'Create') }}</button>
         </div>
       </div>
     </div>
@@ -575,6 +775,28 @@ const router  = useRouter()
 const auth    = useAuthStore()
 const { confirm } = useConfirm()
 
+// ── Action-type icons (same stroke-based SVG language as AppShell's ICONS) ──
+function _svg(body: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
+}
+// Bash: the same terminal glyph used for "SSH Terminal" elsewhere in the app.
+const ICON_BASH = _svg('<path d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"/>')
+// Ansible: a control-node-to-managed-nodes hub glyph (one hub pushing out to three
+// nodes) — evokes Ansible's agentless push model without tracing its trademarked logo.
+const ICON_ANSIBLE = _svg('<circle cx="12" cy="11" r="2.2"/><circle cx="12" cy="4" r="1.8"/><circle cx="6" cy="20" r="1.8"/><circle cx="18" cy="20" r="1.8"/><path d="M12 8.8v-3M10.3 12.7L7 18.3M13.7 12.7L17 18.3"/>')
+// Chain: three linked steps in sequence.
+const ICON_CHAIN = _svg('<rect x="3" y="4.5" width="6" height="6" rx="1.2"/><rect x="9.5" y="14.5" width="6" height="6" rx="1.2"/><rect x="15" y="4.5" width="6" height="6" rx="1.2"/><path d="M9 7.5h6M8 10.5l4 4M16 10.5l-4 4"/>')
+function actionTypeIcon(actionType: string): string {
+  if (actionType === 'bash_script') return ICON_BASH
+  if (actionType === 'chain') return ICON_CHAIN
+  return ICON_ANSIBLE
+}
+function actionTypeLabel(actionType: string): string {
+  if (actionType === 'bash_script') return 'Bash Script'
+  if (actionType === 'chain') return 'Chain'
+  return 'Ansible Playbook'
+}
+
 // ── Service availability ───────────────────────────────────────────────────
 const serviceAvailable = ref(false)
 const serviceLoading   = ref(false)
@@ -599,7 +821,7 @@ const templateProjectFilter = ref('')
 const templateViewMode    = ref<'list' | 'grid'>('list')
 
 // ── Computed ───────────────────────────────────────────────────────────────
-const playbookTemplates = computed(() => allTemplates.value.filter(t => t.action_type === 'ansible_playbook' || t.action_type === 'bash_script'))
+const playbookTemplates = computed(() => allTemplates.value.filter(t => t.action_type === 'ansible_playbook' || t.action_type === 'bash_script' || t.action_type === 'chain'))
 
 const filteredPlaybookTemplates = computed(() => {
   const q = templateSearch.value.trim().toLowerCase()
@@ -622,7 +844,7 @@ function credName(id: string | null): string { return id ? (credMap.value.get(id
 function userName(id: string | null): string { return id ? (userMap.value.get(id) || id) : '' }
 
 function actionTypeBadgeClass(t: string): string {
-  return { ansible_playbook: 'badge-green', bash_script: 'badge-blue', account_push: 'badge-orange', rotate_secret: 'badge-red' }[t] || 'badge-blue'
+  return { ansible_playbook: 'badge-green', bash_script: 'badge-blue', chain: 'badge-orange', account_push: 'badge-orange', rotate_secret: 'badge-red' }[t] || 'badge-blue'
 }
 // Ported from the standalone Jobs page (JobRunsListView.vue) when its list moved into
 // this tab — resolves the actual username instead of just showing "👤 User".
@@ -718,6 +940,25 @@ const runDlg = reactive({
   credFilter: '',
   hostCreds: {} as Record<string, string>,      // host_id → credential_id (per_host)
   extraVars: '', extraVarsError: '', error: '', running: false,
+  variableValues: {} as Record<string, string>, // Runtime Variables (survey_schema.fields), keyed by field name
+  confirmed: false,                             // required checkbox when survey_schema.confirmation_enabled
+  dryRun: false,                                // ansible_playbook only — passes --check --diff, no host changes applied
+})
+
+function runVarPasses(f: any): boolean {
+  if (!f.validation) return true
+  try { return new RegExp(f.validation).test(runDlg.variableValues[f.name] || '') } catch { return true }
+}
+// Every declared Runtime Variable is mandatory — a blank value (or one that fails its own
+// validation regex) blocks Run Now entirely, same discipline as the host/credential checks
+// elsewhere in this flow: never silently proceed on missing input.
+const surveyFieldsInvalid = computed(() => {
+  const fields = runDlg.template?.survey_schema?.fields || []
+  return fields.some((f: any) => {
+    const val = (runDlg.variableValues[f.name] || '').trim()
+    if (!val) return true
+    return f.type === 'string' && !!f.validation && !runVarPasses(f)
+  })
 })
 
 // Account-lifecycle ops act on a "subject" account (the user created/managed on hosts),
@@ -780,22 +1021,47 @@ function openRunModal(t: any) {
   runDlg.hostFilter = ''; runDlg.credFilter = ''
   runDlg.targetGroups = []
   runDlg.credMode = 'default'; runDlg.credAll = ''; runDlg.hostCreds = {}
-  runDlg.extraVars = ''; runDlg.extraVarsError = ''; runDlg.error = ''; runDlg.running = false; runDlg.visible = true
+  runDlg.extraVars = ''; runDlg.extraVarsError = ''; runDlg.error = ''; runDlg.running = false
+  runDlg.variableValues = {}
+  for (const f of (t.survey_schema?.fields || [])) {
+    runDlg.variableValues[f.name] = f.default || (f.type === 'dropdown' && f.options?.length ? f.options[0] : '')
+  }
+  runDlg.confirmed = false
+  runDlg.dryRun = false
+  runDlg.visible = true
 }
 
 async function submitRun() {
   runDlg.extraVarsError = ''; runDlg.error = ''
   let params: any = {}
-  if (runDlg.extraVars.trim()) {
+  const surveyFields = runDlg.template?.survey_schema?.fields || []
+  if (surveyFields.length) {
+    for (const f of surveyFields) {
+      const val = (runDlg.variableValues[f.name] || '').trim()
+      if (!val) {
+        runDlg.error = `"${f.prompt || f.name}" is required.`
+        return
+      }
+      if (f.type === 'string' && f.validation && !runVarPasses(f)) {
+        runDlg.error = `"${f.prompt || f.name}" doesn't match the required pattern.`
+        return
+      }
+      params[f.name] = val
+    }
+  } else if (runDlg.extraVars.trim()) {
     try { params = JSON.parse(runDlg.extraVars) }
     catch { runDlg.extraVarsError = 'Invalid JSON'; return }
+  }
+  if (runDlg.template?.survey_schema?.confirmation_enabled && !runDlg.confirmed) {
+    runDlg.error = 'Please confirm before running.'
+    return
   }
   if (runDlg.credMode === 'all' && !runDlg.credAll) { runDlg.error = 'Select a credential for all hosts'; return }
   // The subject account (which user to create/manage); empty falls back to the template default.
   if (isAccountOp.value && runDlg.subjectCred) params.subject_credential_id = runDlg.subjectCred
   runDlg.running = true
   try {
-    const body: any = { params, credential_mode: runDlg.credMode }
+    const body: any = { params, credential_mode: runDlg.credMode, dry_run: runDlg.dryRun }
     // Only send explicit targets when the user picked some; empty lets the backend
     // fall back to the template defaults.
     if (runDlg.targetMode === 'groups') {
@@ -819,15 +1085,93 @@ async function submitRun() {
 }
 
 // ── Create / Edit Job Template modal (Ansible Playbook or Bash Script) ─────
+interface SurveyFieldForm {
+  name: string; prompt: string; type: 'string' | 'dropdown'; default: string; validation: string; options: string
+  _testing: boolean; _testValue: string
+}
 const _blankPlaybookForm = () => ({
   name: '', description: '', project_id: '', action_type: 'ansible_playbook' as 'ansible_playbook' | 'bash_script',
   script_content: '', script_args: '', imported_from: '',
   use_sudo: false, sudo_credential_id: '',
   credential_id: '', targetHosts: [] as PickerItem[],
-  quick_action: false, enabled: true,
+  quick_action: false, enabled: true, timeoutSeconds: null as number | null,
+  requiresApproval: false, approverRole: 'admin' as 'admin' | 'superadmin',
+  retryCount: 0, retryDelaySeconds: 30,
+  maxParallel: 1, forks: null as number | null,
+  surveyFields: [] as SurveyFieldForm[], confirmationEnabled: false, confirmationText: '',
 })
+// Platform-wide ceiling (app/config.py: job_exec_timeout_seconds) — a per-template
+// value can only tighten this, never exceed it; shown as a hint only, the backend
+// is the real enforcement point (runner.py's min(timeout_seconds, ceiling)).
+const platformTimeoutCeiling = 3600
 const editDlg = reactive({ visible: false, isEdit: false, editingId: '', form: _blankPlaybookForm(), saving: false, error: '' })
 const githubImport = reactive({ visible: false, url: '', loading: false, error: '' })
+
+// ── Chain editor (multi-playbook execution: an ordered list of existing,
+// already-configured templates) ────────────────────────────────────────────
+interface ChainStepForm { template_id: string; continue_on_failure: boolean }
+const chainDlg = reactive({
+  visible: false, isEdit: false, editingId: '', saving: false, error: '', addStepId: '',
+  form: { name: '', description: '', project_id: '', steps: [] as ChainStepForm[], enabled: true },
+})
+// A chain can only reference "real" action templates, never another chain —
+// see chain.py's ChainExecutor, which refuses nested chains outright.
+const chainableTemplates = computed(() => allTemplates.value.filter(t => t.action_type === 'ansible_playbook' || t.action_type === 'bash_script'))
+function stepTemplateById(id: string) { return allTemplates.value.find(t => t.id === id) }
+function addChainStep() {
+  if (!chainDlg.addStepId) return
+  chainDlg.form.steps.push({ template_id: chainDlg.addStepId, continue_on_failure: false })
+  chainDlg.addStepId = ''
+}
+function moveChainStep(i: number, dir: 1 | -1) {
+  const j = i + dir
+  if (j < 0 || j >= chainDlg.form.steps.length) return
+  const steps = chainDlg.form.steps
+  ;[steps[i], steps[j]] = [steps[j], steps[i]]
+}
+function openCreateChain() {
+  chainDlg.isEdit = false; chainDlg.editingId = ''; chainDlg.error = ''; chainDlg.addStepId = ''
+  chainDlg.form = { name: '', description: '', project_id: '', steps: [], enabled: true }
+  chainDlg.visible = true
+}
+function openEditChain(t: any) {
+  chainDlg.isEdit = true; chainDlg.editingId = t.id; chainDlg.error = ''; chainDlg.addStepId = ''
+  chainDlg.form = {
+    name: t.name, description: t.description || '', project_id: t.project_id || '',
+    steps: (t.chain_steps || []).map((s: any) => ({ template_id: s.template_id, continue_on_failure: !!s.continue_on_failure })),
+    enabled: t.enabled,
+  }
+  chainDlg.visible = true
+}
+async function saveChain() {
+  chainDlg.error = ''
+  if (!chainDlg.form.name.trim()) { chainDlg.error = 'Name required.'; return }
+  if (!chainDlg.form.project_id) { chainDlg.error = 'Project required.'; return }
+  if (!chainDlg.form.steps.length) { chainDlg.error = 'Add at least one step.'; return }
+  chainDlg.saving = true
+  try {
+    const p = {
+      name: chainDlg.form.name.trim(), description: chainDlg.form.description,
+      project_id: chainDlg.form.project_id, action_type: 'chain',
+      playbook_path: '', script_content: '',
+      target_scope: 'hosts', target_host_ids: [], quick_action: false, enabled: chainDlg.form.enabled,
+      chain_steps: chainDlg.form.steps.map(s => ({ template_id: s.template_id, continue_on_failure: s.continue_on_failure })),
+    }
+    chainDlg.isEdit ? await api.put(`/job-templates/${chainDlg.editingId}`, p) : await api.post('/job-templates', p)
+    chainDlg.visible = false; loadAll()
+  } catch (e: any) { chainDlg.error = e?.response?.data?.detail || 'Save failed'
+  } finally { chainDlg.saving = false }
+}
+const confirmTesting = ref(false)
+const codeFullscreen = ref(false)
+
+function addSurveyField() {
+  editDlg.form.surveyFields.push({ name: '', prompt: '', type: 'string', default: '', validation: '', options: '', _testing: false, _testValue: '' })
+}
+function testFieldPasses(f: SurveyFieldForm): boolean {
+  if (!f.validation) return true
+  try { return new RegExp(f.validation).test(f._testValue) } catch { return false }
+}
 // Any default_params keys this dialog doesn't manage (e.g. survey-driven params set via
 // the API on templates not created through this form) — preserved and merged back in on
 // save so editing sudo/script_args here can never silently drop unrelated params.
@@ -836,10 +1180,12 @@ let _otherDefaultParams: Record<string, any> = {}
 function openCreate() {
   editDlg.isEdit = false; editDlg.editingId = ''
   Object.assign(editDlg.form, _blankPlaybookForm()); editDlg.error = ''; editDlg.visible = true
-  _otherDefaultParams = {}
+  _otherDefaultParams = {}; confirmTesting.value = false; codeFullscreen.value = false
 }
 function openEdit(t: any) {
+  if (t.action_type === 'chain') { openEditChain(t); return }
   editDlg.isEdit = true; editDlg.editingId = t.id
+  const fields = (t.survey_schema?.fields || []) as any[]
   Object.assign(editDlg.form, {
     name: t.name, description: t.description || '', project_id: t.project_id || '',
     action_type: t.action_type === 'bash_script' ? 'bash_script' : 'ansible_playbook',
@@ -847,11 +1193,23 @@ function openEdit(t: any) {
     script_args: t.default_params?.script_args || '', imported_from: t.default_params?.imported_from || '',
     use_sudo: !!t.default_params?.use_sudo, sudo_credential_id: t.default_params?.sudo_credential_id || '',
     credential_id: t.credential_id || '', quick_action: t.quick_action, enabled: t.enabled,
+    timeoutSeconds: t.timeout_seconds ?? null,
+    requiresApproval: !!t.requires_approval, approverRole: t.approver_role || 'admin',
+    retryCount: t.retry_count ?? 0, retryDelaySeconds: t.retry_delay_seconds ?? 30,
+    maxParallel: t.max_parallel ?? 1, forks: t.forks ?? null,
     targetHosts: (t.target_host_ids || []).map((id: string) => ({ id, label: allHosts.value.find((h: any) => h.id === id)?.name || id })).filter((h: PickerItem) => h.label),
+    surveyFields: fields.map((f: any) => ({
+      name: f.name || '', prompt: f.prompt || '', type: f.type === 'dropdown' ? 'dropdown' : 'string',
+      default: f.default || '', validation: f.validation || '',
+      options: Array.isArray(f.options) ? f.options.join(', ') : '',
+      _testing: false, _testValue: '',
+    })),
+    confirmationEnabled: !!t.survey_schema?.confirmation_enabled,
+    confirmationText: t.survey_schema?.confirmation_text || '',
   })
   const { script_args, use_sudo, sudo_credential_id, imported_from, ...rest } = t.default_params || {}
   _otherDefaultParams = rest
-  editDlg.error = ''; editDlg.visible = true
+  editDlg.error = ''; editDlg.visible = true; confirmTesting.value = false; codeFullscreen.value = false
 }
 function openCreateTemplate() { openCreate() }
 function openEditRaw(t: any) { openEdit(t) }
@@ -907,16 +1265,54 @@ function lintYaml(content: string): LintError[] {
   }
 }
 
+// Blanks out quoted-string interiors and comments (preserving line breaks and
+// overall length so line numbers stay accurate), using the same \-escape and
+// #-comment rules as the quote/bracket balance passes below. Used before
+// keyword tokenizing so words that only appear inside a string/comment never
+// get parsed as real shell syntax.
+function stripStringsAndComments(content: string): string {
+  let out = ''
+  let inSingle = false, inDouble = false
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i]
+    if (c === '\n') { out += '\n'; continue }
+    if (!inSingle && !inDouble && c === '#') {
+      while (i < content.length && content[i] !== '\n') { out += ' '; i++ }
+      i--
+      continue
+    }
+    if (inDouble) {
+      if (c === '\\') { out += '  '; i++; continue }
+      if (c === '"') { inDouble = false; out += ' '; continue }
+      out += ' '
+      continue
+    }
+    if (inSingle) {
+      if (c === "'") { inSingle = false; out += ' '; continue }
+      out += ' '
+      continue
+    }
+    if (c === '\\') { out += '  '; i++; continue }
+    if (c === '"') { inDouble = true; out += ' '; continue }
+    if (c === "'") { inSingle = true; out += ' '; continue }
+    out += c
+  }
+  return out
+}
+
 function lintBash(content: string): LintError[] {
   if (!content.trim()) return []
   const errors: LintError[] = []
 
   // Quote balance (spans lines; respects \-escaping and # comments outside quotes).
+  // The comment-skip loop stops ON the newline (not past it) so `continue`'s
+  // implicit i++ lands past it too — otherwise that newline never reaches the
+  // `c === '\n'` check below and every line-number report after a comment drifts.
   let inSingle = false, inDouble = false, line = 1, quoteLine = 0
   for (let i = 0; i < content.length; i++) {
     const c = content[i]
     if (c === '\n') { line++; continue }
-    if (!inSingle && !inDouble && c === '#') { while (i < content.length && content[i] !== '\n') i++; continue }
+    if (!inSingle && !inDouble && c === '#') { while (i < content.length && content[i] !== '\n') i++; i--; continue }
     if (inDouble) { if (c === '\\') { i++; continue } if (c === '"') inDouble = false; continue }
     if (inSingle) { if (c === "'") inSingle = false; continue }
     if (c === '\\') { i++; continue }
@@ -926,32 +1322,44 @@ function lintBash(content: string): LintError[] {
   if (inDouble) errors.push({ line: quoteLine, message: 'Unclosed double quote (")' })
   if (inSingle) errors.push({ line: quoteLine, message: "Unclosed single quote (')" })
 
-  // Bracket balance: (), [], {} — skipped inside quotes/comments the same way.
+  // Quoted-string contents and comments are blanked out (preserving line breaks)
+  // once here and reused below, so a plain-English "for"/"if"/"case"/"until"
+  // inside an echo/printf message — e.g. echo "checking for host" — is never
+  // mistaken for real shell syntax, and so line numbers can be read straight
+  // off codeOnly's own line breaks without re-deriving them (avoiding the same
+  // comment/newline drift the quote-balance pass above has to guard against).
+  const codeOnly = stripStringsAndComments(content)
+  const codeLines = codeOnly.split('\n')
+
+  // Bracket balance: (), [], {}. Case-statement patterns (e.g. `"-f "*)`) use a
+  // bare `)` that closes the pattern, not a paired bracket — with no case/esac
+  // awareness this reads as an unmatched `)` on every single pattern arm, so a
+  // stray close while inside a case block is treated as a pattern terminator
+  // (silently accepted) rather than a real bracket error.
   const closerFor: Record<string, string> = { ')': '(', ']': '[', '}': '{' }
   const stack: { ch: string; line: number }[] = []
-  inSingle = false; inDouble = false; line = 1
-  for (let i = 0; i < content.length; i++) {
-    const c = content[i]
-    if (c === '\n') { line++; continue }
-    if (!inSingle && !inDouble && c === '#') { while (i < content.length && content[i] !== '\n') i++; continue }
-    if (inDouble) { if (c === '\\') { i++; continue } if (c === '"') inDouble = false; continue }
-    if (inSingle) { if (c === "'") inSingle = false; continue }
-    if (c === '\\') { i++; continue }
-    if (c === '"') { inDouble = true; continue }
-    if (c === "'") { inSingle = true; continue }
-    if (c === '(' || c === '[' || c === '{') stack.push({ ch: c, line })
-    else if (c === ')' || c === ']' || c === '}') {
-      const top = stack.pop()
-      if (!top || top.ch !== closerFor[c]) errors.push({ line, message: `Unexpected "${c}" — no matching "${closerFor[c]}"` })
+  let caseDepth = 0
+  codeLines.forEach((codePart, idx) => {
+    for (const tok of codePart.match(/\b[a-zA-Z_]+\b/g) || []) {
+      if (tok === 'case') caseDepth++
+      else if (tok === 'esac') caseDepth = Math.max(0, caseDepth - 1)
     }
-  }
+    for (const c of codePart) {
+      if (c === '(' || c === '[' || c === '{') stack.push({ ch: c, line: idx + 1 })
+      else if (c === ')' || c === ']' || c === '}') {
+        const top = stack[stack.length - 1]
+        if (top && top.ch === closerFor[c]) { stack.pop(); continue }
+        if (c === ')' && caseDepth > 0) continue // case-pattern terminator, not a bracket
+        errors.push({ line: idx + 1, message: `Unexpected "${c}" — no matching "${closerFor[c]}"` })
+      }
+    }
+  })
   for (const u of stack) errors.push({ line: u.line, message: `Unclosed "${u.ch}"` })
 
   // Block-keyword pairing: if/fi, for|while|until/done, case/esac.
   const closerKw: Record<string, string> = { if: 'fi', for: 'done', while: 'done', until: 'done', case: 'esac' }
   const kwStack: { kw: string; line: number }[] = []
-  content.split('\n').forEach((l, idx) => {
-    const codePart = l.split('#')[0]
+  codeLines.forEach((codePart, idx) => {
     const tokens = codePart.match(/\b[a-zA-Z_]+\b/g) || []
     for (const tok of tokens) {
       if (closerKw[tok]) kwStack.push({ kw: tok, line: idx + 1 })
@@ -988,6 +1396,7 @@ async function saveTemplate() {
   editDlg.saving = true
   try {
     const isBash = editDlg.form.action_type === 'bash_script'
+    const namedFields = editDlg.form.surveyFields.filter(f => f.name.trim())
     const p = {
       name: editDlg.form.name.trim(), description: editDlg.form.description,
       project_id: editDlg.form.project_id, action_type: editDlg.form.action_type,
@@ -996,11 +1405,32 @@ async function saveTemplate() {
       credential_id: editDlg.form.credential_id || null,
       target_host_ids: editDlg.form.targetHosts.map(h => h.id),
       target_scope: 'hosts', quick_action: editDlg.form.quick_action, enabled: editDlg.form.enabled,
+      timeout_seconds: editDlg.form.timeoutSeconds || null,
+      requires_approval: editDlg.form.requiresApproval,
+      approver_role: editDlg.form.requiresApproval ? editDlg.form.approverRole : null,
+      retry_count: editDlg.form.retryCount || 0,
+      retry_delay_seconds: editDlg.form.retryDelaySeconds || 30,
+      max_parallel: editDlg.form.maxParallel || 1,
+      forks: editDlg.form.forks || null,
       default_params: {
         ..._otherDefaultParams,
-        ...(isBash && editDlg.form.script_args ? { script_args: editDlg.form.script_args } : {}),
+        // Runtime Variables build $1 $2 … server-side when present — the raw string here
+        // is only the fallback for bash templates with no declared variables.
+        ...(isBash && !namedFields.length && editDlg.form.script_args ? { script_args: editDlg.form.script_args } : {}),
         ...(editDlg.form.use_sudo ? { use_sudo: true, sudo_credential_id: editDlg.form.sudo_credential_id || null } : {}),
         ...(editDlg.form.imported_from ? { imported_from: editDlg.form.imported_from } : {}),
+      },
+      survey_schema: {
+        fields: namedFields.map(f => ({
+          name: f.name.trim(),
+          prompt: f.prompt.trim() || f.name.trim(),
+          type: f.type,
+          default: f.default,
+          ...(f.type === 'string' && f.validation.trim() ? { validation: f.validation.trim() } : {}),
+          ...(f.type === 'dropdown' ? { options: f.options.split(',').map(s => s.trim()).filter(Boolean) } : {}),
+        })),
+        confirmation_enabled: editDlg.form.confirmationEnabled,
+        confirmation_text: editDlg.form.confirmationText,
       },
     }
     editDlg.isEdit ? await api.put(`/job-templates/${editDlg.editingId}`, p) : await api.post('/job-templates', p)
@@ -1154,7 +1584,16 @@ onMounted(async () => {
 }
 .playbook-card:hover { border-color: var(--accent, #58a6ff); box-shadow: 0 4px 20px rgba(0,0,0,0.12); transform: translateY(-1px); }
 .pb-header { display: flex; align-items: flex-start; gap: 12px; padding: 16px 16px 10px; }
-.pb-icon { font-size: 22px; flex-shrink: 0; margin-top: 2px; }
+.pb-icon { width: 22px; height: 22px; flex-shrink: 0; margin-top: 2px; color: var(--text2); }
+.pb-icon :deep(svg) { width: 22px; height: 22px; display: block; }
+.row-type-icon { display: inline-flex; width: 15px; height: 15px; vertical-align: -3px; color: var(--text2); }
+.row-type-icon :deep(svg) { width: 15px; height: 15px; display: block; }
+
+/* ── Chain step editor ─────────────────────────────────────────────────── */
+.chain-step-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; background: var(--bg3); }
+.chain-step-num { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: var(--bg2); color: var(--text2); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.chain-step-name { flex: 1; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chain-step-cof { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); white-space: nowrap; cursor: pointer; flex-shrink: 0; }
 .pb-meta { flex: 1; min-width: 0; }
 .pb-name { font-size: 15px; font-weight: 700; color: var(--text1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 4px; }
 .pb-type-badge { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -1188,6 +1627,22 @@ onMounted(async () => {
 }
 .code-source-note { font-size: 11.5px; color: var(--text2); margin-top: 6px; }
 .code-source-note a { color: var(--accent2); }
+
+/* VS Code-style left sidebar: fixed width, its own independent scroll — see the
+   template comment at its opening tag for why (Runtime Variables/Confirmation are
+   variable-height and were starving the code editor of space when they shared one
+   flex column with it). */
+.modal-fields-scroll { width: 420px; flex-shrink: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 18px; border-right: 1px solid var(--border); }
+
+/* The code block is the dominant right pane, filling all remaining width and height. */
+.code-block-max { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 18px; }
+.code-editor-wrap--max { flex: 1; }
+.code-editor-wrap--max .code-input,
+.code-editor-wrap--max .code-gutter { height: 100%; }
+/* Fullscreen: absolutely positioned over the whole modal-body (which is
+   position:relative — see its inline style) so the header title/close button and
+   footer Save/Cancel stay visible and usable while the fields sidebar is hidden. */
+.code-block-fullscreen { position: absolute; inset: 0; z-index: 50; background: var(--bg2); }
 .lint-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .lint-error { font-size: 12px; color: #e3b341; background: rgba(227,179,65,0.08); border: 1px solid rgba(227,179,65,0.25); border-radius: 5px; padding: 6px 10px; font-family: var(--font-mono, monospace); }
 .lint-ok { margin-top: 8px; font-size: 12px; color: #3fb950; }
@@ -1204,6 +1659,20 @@ onMounted(async () => {
 
 /* ── Wide modal ───────────────────────────────────────────────────────────── */
 .modal--lg { width: min(860px, 94vw); }
+.modal--full { width: 96vw; height: 92vh; max-height: 92vh; }
+
+/* ── Runtime Variables (Edit Job Template) ───────────────────────────────── */
+.survey-field-row { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--surface1); display: flex; flex-direction: column; gap: 10px; }
+.survey-field-tester { display: flex; align-items: center; gap: 10px; }
+.survey-field-tester .input { max-width: 260px; }
+.test-pass { color: #3fb950; font-size: 12px; font-weight: 600; }
+.test-fail { color: var(--danger); font-size: 12px; font-weight: 600; }
+.confirm-preview { margin-top: 10px; padding: 12px; border-radius: 8px; border: 1px solid rgba(210,153,34,0.35); background: rgba(210,153,34,0.08); }
+.confirm-preview-text { font-size: 13px; color: var(--text); white-space: pre-wrap; }
+
+/* ── Confirmation gate (Run modal) ───────────────────────────────────────── */
+.confirm-gate { margin-top: 12px; padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(210,153,34,0.35); background: rgba(210,153,34,0.08); }
+.confirm-gate-text { font-size: 13px; color: var(--text); white-space: pre-wrap; }
 
 /* ── Extra badges ─────────────────────────────────────────────────────────── */
 .badge-green  { background: rgba(63,185,80,0.12); border: 1px solid rgba(63,185,80,0.35); color: #3fb950; }

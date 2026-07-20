@@ -31,7 +31,26 @@
     </div>
 
     <!-- xterm.js mounts here -->
-    <div class="term-container" ref="containerRef" @contextmenu.prevent="onRightClickPaste" />
+    <div class="term-container" ref="containerRef" @contextmenu.prevent="onContextMenu" @mouseup="onMouseUp" />
+
+    <!-- Right-click terminal options menu -->
+    <div v-if="ctxMenu.visible" class="term-ctx-backdrop" @click="ctxMenu.visible = false" @contextmenu.prevent="ctxMenu.visible = false" />
+    <div v-if="ctxMenu.visible" class="term-ctx-menu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
+      <button class="term-ctx-item" :disabled="!hasSelection" @click="ctxAction(() => { const s = term?.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}) })">⧉ Copy</button>
+      <button class="term-ctx-item" @click="ctxAction(pasteFromClipboard)">📋 Paste</button>
+      <button class="term-ctx-item" @click="ctxAction(snip)">📷 Capture Screen</button>
+      <div class="term-ctx-sep" />
+      <div class="term-ctx-row">
+        <span>Font Size</span>
+        <span class="term-ctx-stepper">
+          <button @click="ctxAction(() => emit('font-size-delta', -1))">−</button>
+          <button @click="ctxAction(() => emit('font-size-delta', 1))">+</button>
+        </span>
+      </div>
+      <div class="term-ctx-sep" />
+      <button class="term-ctx-item" @click="ctxAction(() => emit('split', 'h'))">⊞ Split Horizontal</button>
+      <button class="term-ctx-item" @click="ctxAction(() => emit('split', 'v'))">⊟ Split Vertical</button>
+    </div>
 
     <!-- Command-confirm overlay -->
     <div v-if="pendingConfirm" class="confirm-overlay">
@@ -50,11 +69,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { reactive, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { wsUrl } from '@/api/client'
+import { useCapturesStore } from '@/stores/captures'
 import '@xterm/xterm/css/xterm.css'
+
+const captures = useCapturesStore()
 
 const props = defineProps<{
   sessionId: string
@@ -79,6 +101,8 @@ const DEFAULT_THEME: Record<string, string> = {
 const emit = defineEmits<{
   (e: 'disconnected'): void
   (e: 'reconnect'): void
+  (e: 'split', dir: 'h' | 'v'): void
+  (e: 'font-size-delta', delta: number): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -127,7 +151,29 @@ function pasteFromClipboard() {
       ws.send(JSON.stringify({ type: 'input', data: text }))
   })
 }
-async function onRightClickPaste() { pasteFromClipboard() }
+
+// ── Right-click context menu ─────────────────────────────────────────────────
+const ctxMenu = reactive({ visible: false, x: 0, y: 0 })
+const hasSelection = ref(false)
+function onContextMenu(e: MouseEvent) {
+  hasSelection.value = !!term?.hasSelection()
+  ctxMenu.x = e.clientX
+  ctxMenu.y = e.clientY
+  ctxMenu.visible = true
+}
+function ctxAction(fn: () => void) {
+  ctxMenu.visible = false
+  fn()
+}
+// Click-drag-select auto-copies (PuTTY/iTerm2 convention) — checked on mouseup
+// rather than xterm's onSelectionChange, which fires continuously mid-drag and
+// would otherwise hit the clipboard dozens of times for one selection.
+function onMouseUp() {
+  if (term?.hasSelection()) {
+    const s = term.getSelection()
+    if (s) navigator.clipboard.writeText(s).catch(() => {})
+  }
+}
 
 // ── Safe fit: only resize terminal if dimensions would actually change ──────
 // This prevents the ResizeObserver feedback loop that sends multiple identical
@@ -263,6 +309,22 @@ onMounted(async () => {
         return false
       }
     }
+    // Plain Ctrl+V (Windows/Linux) / Cmd+V (Mac) — paste, alongside the
+    // Ctrl+Shift+V above. Terminals conventionally reserve bare Ctrl+V for a
+    // literal control character, but a browser-embedded terminal's users
+    // overwhelmingly expect their OS's normal paste shortcut to just work.
+    if ((evt.ctrlKey && !evt.shiftKey && evt.key.toLowerCase() === 'v') ||
+        (evt.metaKey && evt.key.toLowerCase() === 'v')) {
+      pasteFromClipboard()
+      return false
+    }
+    // Ctrl+S / Cmd+S — capture screen (must preventDefault or the browser's own
+    // "Save Page" dialog opens instead).
+    if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 's') {
+      evt.preventDefault()
+      snip()
+      return false
+    }
     return true
   })
 
@@ -318,8 +380,25 @@ function snip() {
   ctx.fillStyle = '#1a1b1e'
   ctx.fillRect(0, 0, w, h)
   for (const c of canvases) ctx.drawImage(c, 0, 0)
-  composite.toBlob(blob => {
-    if (!blob) return
+
+  // canvas.toBlob is always async, but navigator.clipboard.write() requires a
+  // user-activation context — by the time toBlob's callback fires, that
+  // activation window has already closed in most browsers, so a plain
+  // `.then(blob => clipboard.write(...))` silently fails (caught and
+  // swallowed, which is why capture-then-paste showed nothing). The fix: the
+  // Clipboard API spec explicitly allows a ClipboardItem's value to be a
+  // Promise<Blob> for exactly this case — constructing the ClipboardItem (and
+  // calling write()) SYNCHRONOUSLY, right here in the click handler, keeps us
+  // inside the activation window even though the blob itself resolves later.
+  const blobPromise = new Promise<Blob>((resolve, reject) => {
+    composite.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
+  })
+
+  if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]).catch(() => {})
+  }
+
+  blobPromise.then((blob) => {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -328,8 +407,16 @@ function snip() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-    navigator.clipboard?.write?.([new ClipboardItem({ 'image/png': blob })]).catch(() => {})
-  }, 'image/png')
+
+    // Also drop it in the captures tray (topbar bell) — expires after an hour,
+    // and can be re-copied from there even if the first clipboard write above
+    // didn't land (e.g. an older browser without the Promise<Blob> support).
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') captures.add(reader.result, props.sessionId.slice(0, 8))
+    }
+    reader.readAsDataURL(blob)
+  }).catch(() => {})
 }
 
 defineExpose({
@@ -465,4 +552,30 @@ defineExpose({
 .btn-danger  { background: #ff5c57; color: #fff; }
 .btn-primary { background: #57c7ff; color: #1a1b1e; }
 .btn:hover   { opacity: 0.85; }
+
+/* Right-click terminal options menu — this whole component stays permanently
+   dark (matches the live-terminal convention), so these use fixed colors like
+   everything else here rather than the site's light/dark theme variables. */
+.term-ctx-backdrop { position: fixed; inset: 0; z-index: 400; }
+.term-ctx-menu {
+  position: fixed; z-index: 401; min-width: 190px;
+  background: #21262d; border: 1px solid #3a4a5a; border-radius: 8px;
+  padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+  font-size: 13px; color: #dce1e7;
+}
+.term-ctx-item {
+  display: block; width: 100%; text-align: left; padding: 7px 10px;
+  background: none; border: none; border-radius: 5px; color: inherit;
+  font-size: 13px; cursor: pointer;
+}
+.term-ctx-item:hover:not(:disabled) { background: #30363d; }
+.term-ctx-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.term-ctx-sep { height: 1px; background: #3a4a5a; margin: 4px 2px; }
+.term-ctx-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; }
+.term-ctx-stepper { display: flex; gap: 4px; }
+.term-ctx-stepper button {
+  width: 22px; height: 22px; border-radius: 4px; border: 1px solid #3a4a5a;
+  background: #1a1b1e; color: #dce1e7; cursor: pointer; font-size: 14px; line-height: 1;
+}
+.term-ctx-stepper button:hover { background: #30363d; }
 </style>

@@ -9,7 +9,7 @@ from libs.obsmetrics import ServiceMetrics
 from libs.securelog import configure_logging
 from libs.pluginbase import discover_plugins, IdentityProvider
 
-from .api import audit, auth, authorizations, command_filters, internal, login_acls, settings as settings_api, tokens, users
+from .api import audit, auth, authorizations, command_filters, internal, login_acls, mail_settings, settings as settings_api, tokens, users
 from .config import get_settings
 from .database import engine
 from .redis_client import redis_client
@@ -35,6 +35,7 @@ app.include_router(login_acls.router, prefix="/api/v1")
 app.include_router(tokens.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(settings_api.router, prefix="/api/v1")
+app.include_router(mail_settings.router, prefix="/api/v1")
 app.include_router(internal.router, prefix="/api/v1")
 
 _metrics = ServiceMetrics()

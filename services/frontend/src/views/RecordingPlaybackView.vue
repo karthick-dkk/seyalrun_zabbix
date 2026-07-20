@@ -187,16 +187,19 @@ function formatDuration(s: number) {
 <style scoped>
 .back-link {
   font-size: 13px;
-  color: var(--color-accent, #58a6ff);
+  color: var(--accent2);
   text-decoration: none;
   display: inline-block;
   margin-bottom: 6px;
 }
 .playback-meta {
   font-size: 13px;
-  color: var(--color-text-muted, #8b949e);
+  color: var(--text2);
   margin-top: 4px;
 }
+/* player-wrap/controls below are the embedded terminal-replay widget — kept
+   intentionally dark like a video player's chrome, matching the live terminal
+   (TermSession.vue) and other terminal-replay views regardless of site theme. */
 .player-wrap {
   background: #0d1117;
   border-radius: 6px 6px 0 0;

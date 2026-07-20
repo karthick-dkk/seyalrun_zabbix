@@ -14,10 +14,20 @@ import time
 import redis.asyncio as redis
 
 SESSION_PREFIX = "session:"
+# Single-session-per-user (v1.3, opt-in per user/group — see grouppolicy.py) —
+# one pointer per user to their current session id, maintained ONLY while
+# enforcement is active for them. Same Redis instance/key convention as
+# SESSION_PREFIX; api-gateway's logout handler (main.py) clears this too, so
+# the two must agree on the exact string.
+USER_SESSION_PREFIX = "user_session:"
 
 
 def _key(session_id: str) -> str:
     return f"{SESSION_PREFIX}{session_id}"
+
+
+def _user_key(user_id: str) -> str:
+    return f"{USER_SESSION_PREFIX}{user_id}"
 
 
 async def create_session(
@@ -30,6 +40,9 @@ async def create_session(
     idle_minutes: int,
     kiosk_host_id: str | None = None,
     pwc: bool = False,
+    mfa_pending: bool = False,
+    mfa_setup_required: bool = False,
+    single_session_enabled: bool = False,
 ) -> str:
     """Mint a new session, seeded with a fresh created_at/last_seen_at. Initial
     TTL is the idle window — api-gateway slides it forward on every request,
@@ -44,8 +57,25 @@ async def create_session(
         "kiosk": bool(kiosk_host_id),
         "kiosk_host_id": kiosk_host_id,
         "pwc": pwc,
+        "mfa_pending": mfa_pending,
+        "mfa_setup_required": mfa_setup_required,
         "created_at": now,
         "last_seen_at": now,
     }
-    await client.set(_key(session_id), json.dumps(blob), ex=idle_minutes * 60)
+
+    ttl = idle_minutes * 60
+    if single_session_enabled:
+        # Kick out whatever session this user had open elsewhere before minting
+        # the new one, so there's never a window with two simultaneously-valid
+        # sessions for the same user. Applies uniformly to every caller
+        # (password/SSO login, and the pwc/mfa re-mints) — a re-mint replacing
+        # the user's own prior-state session is exactly the intended behavior,
+        # not a false positive kick-out of a competing device. Opt-in (v1.3):
+        # skipped entirely, no pointer written, for users/groups without it on.
+        prior_session_id = await client.get(_user_key(user_id))
+        if prior_session_id:
+            await client.delete(_key(prior_session_id))
+        await client.set(_user_key(user_id), session_id, ex=ttl)
+
+    await client.set(_key(session_id), json.dumps(blob), ex=ttl)
     return session_id

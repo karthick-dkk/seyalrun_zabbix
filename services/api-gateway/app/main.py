@@ -27,6 +27,7 @@ from .routers.metrics import router as metrics_router
 from .security import (
     SESSION_COOKIE_NAME,
     SESSION_PREFIX,
+    USER_SESSION_PREFIX,
     AuthError,
     resolve_identity,
     resolve_identity_from_bearer_or_cookie,
@@ -187,6 +188,12 @@ async def auth_session(request: Request):
         "role_name": identity.get("role", "user"),
         "roles": identity.get("roles") or [identity.get("role", "user")],
         "must_change_password": bool(identity.get("pwc")),
+        # Surfaced for symmetry with must_change_password — a tab that reloads
+        # mid-gate (pending MFA verify, or group-forced enrollment) can at least
+        # see why every other call 403s, even though no route currently redirects
+        # on these (same pre-existing limitation must_change_password already had).
+        "mfa_pending": bool(identity.get("mfa_pending")),
+        "mfa_setup_required": bool(identity.get("mfa_setup_required")),
         "kiosk": bool(identity.get("kiosk_host_id")),
         "kiosk_host_id": identity.get("kiosk_host_id"),
     }
@@ -202,11 +209,28 @@ async def auth_logout(request: Request, response: Response):
     handled entirely in the gateway since it's the one holding the raw opaque
     token (identity-service never sees it after minting). Also clears the
     sr_session bootstrap cookie if one was set — it references the same
-    Redis key, so it's already dead, this just tidies up the browser."""
+    Redis key, so it's already dead, this just tidies up the browser.
+
+    Also clears the single-session-per-user pointer (identity-service/app/
+    sessions.py::USER_SESSION_PREFIX) — but ONLY if it still points at the
+    session being logged out. If the user already logged in again elsewhere
+    before this call landed, that newer session owns the pointer now and this
+    logout must not touch it (deleting it would just mean the next login has
+    no prior session to kick out — harmless, but still the wrong owner's data)."""
     authorization = request.headers.get("authorization") or ""
     if authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
         if token and not token.startswith("sr_"):
+            raw = await redis_client.get(f"{SESSION_PREFIX}{token}")
+            if raw:
+                try:
+                    user_id = json.loads(raw).get("user_id")
+                except (TypeError, ValueError):
+                    user_id = None
+                if user_id:
+                    current_pointer = await redis_client.get(f"{USER_SESSION_PREFIX}{user_id}")
+                    if current_pointer == token:
+                        await redis_client.delete(f"{USER_SESSION_PREFIX}{user_id}")
             await redis_client.delete(f"{SESSION_PREFIX}{token}")
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
 
@@ -408,9 +432,44 @@ async def gateway(path: str, request: Request):
                 detail="password change required: POST /api/v1/auth/change-password",
             )
 
+        # Login-time MFA gate: a session minted with MFA pending may ONLY verify
+        # its code, resend an email OTP, or probe nav — mirrors the pwc block above.
+        if identity.get("mfa_pending") and path not in ("auth/mfa/verify-login", "auth/mfa/resend", "auth/nav"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="MFA verification required: POST /api/v1/auth/mfa/verify-login",
+            )
+
+        # Group-enforced MFA gate: the caller has no mfa_method yet but belongs to a
+        # group that requires one — locked to the enrollment endpoints (not
+        # verify-login, since there's no code to verify yet; enrollment IS the proof).
+        _mfa_enroll_paths = ("auth/mfa/setup", "auth/mfa/setup-email", "auth/mfa/enable", "auth/nav")
+        if identity.get("mfa_setup_required") and path not in _mfa_enroll_paths:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="your group requires MFA: POST /api/v1/auth/mfa/setup",
+            )
+
         # Zero-trust: deny anything the caller's roles don't explicitly grant.
-        if not rbac.is_authorized(identity.get("roles") or [identity.get("role", "user")], request.method, path):
+        # Exception: group-enforced MFA overrides the role-level "mfa" capability
+        # flag (rbac.is_authorized's special-case for these same 3 enrollment paths)
+        # — a user forced into MFA by their group may always enroll, regardless of
+        # whether their role separately carries the "mfa" flag.
+        _mfa_enforced_bypass = identity.get("mfa_setup_required") and path in (
+            "auth/mfa/setup", "auth/mfa/setup-email", "auth/mfa/enable",
+        )
+        if not _mfa_enforced_bypass and not rbac.is_authorized(
+            identity.get("roles") or [identity.get("role", "user")], request.method, path
+        ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden: your role does not permit this action")
+        # Preserve the caller's true (pre-elevation) primary role — downstream_role()
+        # below can "vouch" a support/custom write up to X-User-Role: admin (see its
+        # own docstring), which is right for simple admin-gated CRUD guards but means
+        # a resource-scoped check (e.g. "does this support user actually manage this
+        # zone") can't tell a real admin from a vouched-for support write using
+        # X-User-Role alone. X-User-Real-Role carries the un-elevated role for the
+        # few downstream checks that need that distinction.
+        identity["real_role"] = rbac.primary_role(identity.get("roles") or [identity.get("role", "user")])
         # Forward the effective downstream role (see rbac.downstream_role for the rules).
         identity["role"] = rbac.downstream_role(
             identity.get("roles") or [identity.get("role", "user")], request.method, path.split("/", 1)[0])

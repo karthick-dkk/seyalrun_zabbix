@@ -121,9 +121,10 @@ async def list_credentials(host_id: str | None = None, session: AsyncSession = D
             select(ZACredential)
             .join(ZACredentialHostLink, ZACredential.id == ZACredentialHostLink.credential_id)
             .where(ZACredentialHostLink.host_id == host_id)
+            .order_by(ZACredential.is_default.desc())
         )
     else:
-        stmt = select(ZACredential)
+        stmt = select(ZACredential).order_by(ZACredential.is_default.desc())
     result = await session.execute(stmt)
     return [await _credential_out(session, c) for c in result.scalars().all()]
 

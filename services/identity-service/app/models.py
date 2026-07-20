@@ -35,6 +35,11 @@ class ZAUserGroup(Base):
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     zabbix_usrgrpid: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Group-level policy doc (v1.2) — mirrors ZARole.permissions' JSON-doc convention so
+    # new policies don't need a new migration each time. Shape:
+    # {"mfa_enforced": bool, "setup_wizard": bool, "notifications_enabled": bool}.
+    # Absent/false for every key = today's behavior (no group policy applied).
+    policies: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     members: Mapped[list["ZAUserGroupMember"]] = relationship("ZAUserGroupMember", back_populates="group", lazy="select")
@@ -54,6 +59,27 @@ class ZAUser(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     totp_secret: Mapped[str] = mapped_column(Text, default="")  # base32 seed, vault-encrypted (v1.1)
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # v1.1
+    # Which second factor is active, if any — "totp" (authenticator app, uses totp_secret/
+    # totp_enabled above) or "email" (OTP mailed on demand, no persistent secret needed).
+    # None means MFA is off. Kept separate from totp_enabled so email-OTP doesn't need to
+    # repurpose TOTP-specific columns.
+    mfa_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # First-login "account setup" wizard (v1.2) — set True once a user has been through
+    # it (see api/auth.py's /auth/setup/complete). Existing users are backfilled to True
+    # at migration time (they're not "new"); only accounts created after this ships and
+    # who land in a setup_wizard-enabled group see it.
+    setup_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Optional per-account login IP allowlist (v1.2) — list[str] of CIDR strings (e.g.
+    # ["203.0.113.4/32"]). Validated with ipaddress.ip_network, same approach already
+    # proven in api/internal.py::login_acls_check. Only enforced when ip_restriction_enabled
+    # is also set (explicit toggle, v1.3 — previously implicit on "list non-empty", now
+    # separated so an admin can flip enforcement off without losing the configured list).
+    allowed_ips: Mapped[list] = mapped_column(JSON, default=list)
+    ip_restriction_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # v1.3, opt-in
+    # Single-session-per-user (v1.3) — opt-in per user; a group can also turn this on for
+    # all its members (za_user_groups.policies.single_session_enabled), most-restrictive-
+    # wins: enforced if EITHER this OR any of the user's groups has it on.
+    single_session_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -88,6 +114,34 @@ class ZAGroupRole(Base):
 
     group_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_user_groups.id", ondelete="CASCADE"), primary_key=True)
     role_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_roles.id", ondelete="CASCADE"), primary_key=True)
+
+
+class ZAGroupNotifyConfig(Base):
+    """Per-group email alert routing (v1.2) — mirrors ZAMailSettings' get-or-create-row
+    pattern but keyed per group instead of singleton. On/off is controlled purely by the
+    parent group's policies.notifications_enabled flag; this row just holds where/how
+    much. Delivery reuses mailer.send_mail (SMTP/Graph) — no separate channel infra."""
+
+    __tablename__ = "za_group_notify_config"
+
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_user_groups.id", ondelete="CASCADE"), primary_key=True)
+    emails: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
+    min_severity: Mapped[str] = mapped_column(String(20), default="medium")  # info|medium|critical
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ZAGroupIpRestriction(Base):
+    """Per-group shared login-IP allowlist (v1.3) — same split as ZAGroupNotifyConfig:
+    on/off lives on the parent group's policies.ip_restriction_enabled flag, this row
+    just holds the CIDR values. Combines with any per-user allowlist via most-
+    restrictive-wins (grouppolicy.py::ip_login_allowed) — every ACTIVE constraint
+    (user-level and/or each enabled group's) must independently match the login IP."""
+
+    __tablename__ = "za_group_ip_restrictions"
+
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_user_groups.id", ondelete="CASCADE"), primary_key=True)
+    cidrs: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class ZASession(Base):
@@ -228,6 +282,35 @@ class ZALoginAttempt(Base):
     fail_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ZAMailSettings(Base):
+    """Singleton mail-delivery config for MFA email OTPs (mirrors ZALogBackendConfig's
+    single-row pattern — services/inventory-service/app/models.py). Secrets
+    (smtp_password, graph_client_secret) are vault-encrypted, never returned
+    plaintext by the API (see api/mail_settings.py's masked-secret GET/PUT).
+    """
+
+    __tablename__ = "za_mail_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    provider: Mapped[str] = mapped_column(String(10), default="")  # "smtp" | "graph" | ""
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    from_address: Mapped[str] = mapped_column(String(320), default="")
+    from_name: Mapped[str] = mapped_column(String(200), default="")
+
+    smtp_host: Mapped[str] = mapped_column(String(255), default="")
+    smtp_port: Mapped[int] = mapped_column(Integer, default=587)
+    smtp_username: Mapped[str] = mapped_column(String(320), default="")
+    smtp_password: Mapped[str] = mapped_column(Text, default="")  # vault-encrypted
+    smtp_use_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    graph_tenant_id: Mapped[str] = mapped_column(String(100), default="")
+    graph_client_id: Mapped[str] = mapped_column(String(100), default="")
+    graph_client_secret: Mapped[str] = mapped_column(Text, default="")  # vault-encrypted
+    graph_sender_upn: Mapped[str] = mapped_column(String(320), default="")
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class ZASetting(Base):
