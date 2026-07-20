@@ -1,8 +1,6 @@
-# SeyalRun Zabbix
+# [SeyalRun](https://seyalrun.com/)
 
-SeyalRun-zabbix is a ground-up microservices rewrite of the SeyalRun DevOps
-console: a PAM (Privileged Access Management) layer for SSH-managed hosts,
-embeddable as an iframe inside Zabbix.
+A standalone PAM and Automation platform for your server fleet. 
 
 <img width="2834" height="1630" alt="image" src="https://github.com/user-attachments/assets/68872c8c-c21c-4da1-a950-c42e9ea68190" />
 
@@ -21,6 +19,9 @@ the superadmin account, and starts every service. Takes a few minutes on
 first run (image pulls); safe to re-run (an existing `.env`/cert/database is
 reused, not overwritten).
 <img width="2842" height="1622" alt="image" src="https://github.com/user-attachments/assets/1ca5e5cf-fad5-4964-8224-0ac56c62bff8" />
+
+# Documentation
+Please refer to [seyalrun.com](https://seyalrun.com/)
 
 Every choice has a default and can be overridden by exporting a variable
 before running the command above:
