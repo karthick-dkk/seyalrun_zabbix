@@ -27,6 +27,7 @@ from .routers.metrics import router as metrics_router
 from .security import (
     SESSION_COOKIE_NAME,
     SESSION_PREFIX,
+    USER_SESSION_PREFIX,
     AuthError,
     resolve_identity,
     resolve_identity_from_bearer_or_cookie,
@@ -208,11 +209,28 @@ async def auth_logout(request: Request, response: Response):
     handled entirely in the gateway since it's the one holding the raw opaque
     token (identity-service never sees it after minting). Also clears the
     sr_session bootstrap cookie if one was set — it references the same
-    Redis key, so it's already dead, this just tidies up the browser."""
+    Redis key, so it's already dead, this just tidies up the browser.
+
+    Also clears the single-session-per-user pointer (identity-service/app/
+    sessions.py::USER_SESSION_PREFIX) — but ONLY if it still points at the
+    session being logged out. If the user already logged in again elsewhere
+    before this call landed, that newer session owns the pointer now and this
+    logout must not touch it (deleting it would just mean the next login has
+    no prior session to kick out — harmless, but still the wrong owner's data)."""
     authorization = request.headers.get("authorization") or ""
     if authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
         if token and not token.startswith("sr_"):
+            raw = await redis_client.get(f"{SESSION_PREFIX}{token}")
+            if raw:
+                try:
+                    user_id = json.loads(raw).get("user_id")
+                except (TypeError, ValueError):
+                    user_id = None
+                if user_id:
+                    current_pointer = await redis_client.get(f"{USER_SESSION_PREFIX}{user_id}")
+                    if current_pointer == token:
+                        await redis_client.delete(f"{USER_SESSION_PREFIX}{user_id}")
             await redis_client.delete(f"{SESSION_PREFIX}{token}")
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
 

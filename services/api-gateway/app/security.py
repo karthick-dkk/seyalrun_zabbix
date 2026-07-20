@@ -19,6 +19,9 @@ from .config import get_settings
 from .redis_client import redis_client
 
 SESSION_PREFIX = "session:"
+# Mirrors identity-service/app/sessions.py's USER_SESSION_PREFIX exactly (same
+# Redis instance) — main.py's logout handler clears this pointer too.
+USER_SESSION_PREFIX = "user_session:"
 
 # httpOnly cross-tab bootstrap cookie — set ONLY on a direct (non-iframe)
 # /auth/login or /auth/change-password response, holding the SAME opaque
