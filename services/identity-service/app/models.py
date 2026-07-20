@@ -70,9 +70,16 @@ class ZAUser(Base):
     # who land in a setup_wizard-enabled group see it.
     setup_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     # Optional per-account login IP allowlist (v1.2) — list[str] of CIDR strings (e.g.
-    # ["203.0.113.4/32"]). Empty list = unrestricted (today's behavior). Validated with
-    # ipaddress.ip_network, same approach already proven in api/internal.py::login_acls_check.
+    # ["203.0.113.4/32"]). Validated with ipaddress.ip_network, same approach already
+    # proven in api/internal.py::login_acls_check. Only enforced when ip_restriction_enabled
+    # is also set (explicit toggle, v1.3 — previously implicit on "list non-empty", now
+    # separated so an admin can flip enforcement off without losing the configured list).
     allowed_ips: Mapped[list] = mapped_column(JSON, default=list)
+    ip_restriction_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # v1.3, opt-in
+    # Single-session-per-user (v1.3) — opt-in per user; a group can also turn this on for
+    # all its members (za_user_groups.policies.single_session_enabled), most-restrictive-
+    # wins: enforced if EITHER this OR any of the user's groups has it on.
+    single_session_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -120,6 +127,20 @@ class ZAGroupNotifyConfig(Base):
     group_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_user_groups.id", ondelete="CASCADE"), primary_key=True)
     emails: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
     min_severity: Mapped[str] = mapped_column(String(20), default="medium")  # info|medium|critical
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ZAGroupIpRestriction(Base):
+    """Per-group shared login-IP allowlist (v1.3) — same split as ZAGroupNotifyConfig:
+    on/off lives on the parent group's policies.ip_restriction_enabled flag, this row
+    just holds the CIDR values. Combines with any per-user allowlist via most-
+    restrictive-wins (grouppolicy.py::ip_login_allowed) — every ACTIVE constraint
+    (user-level and/or each enabled group's) must independently match the login IP."""
+
+    __tablename__ = "za_group_ip_restrictions"
+
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_user_groups.id", ondelete="CASCADE"), primary_key=True)
+    cidrs: Mapped[list] = mapped_column(JSON, default=list)  # list[str]
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

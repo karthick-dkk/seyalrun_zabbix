@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..audit import log_action
 from ..database import get_session
 from ..deps import require_admin, require_service_token, require_superadmin
-from ..models import ZAGroupNotifyConfig, ZAGroupRole, ZARole, ZAUser, ZAUserGroup, ZAUserGroupMember, ZAUserRole
+from ..models import ZAGroupIpRestriction, ZAGroupNotifyConfig, ZAGroupRole, ZARole, ZAUser, ZAUserGroup, ZAUserGroupMember, ZAUserRole
 from ..schemas import (
+    GroupIpRestrictionUpdate,
     GroupMembersUpdate,
     GroupNotifyConfigUpdate,
     GroupPoliciesUpdate,
@@ -152,8 +153,8 @@ async def set_group_policies(
     actor_name: str | None = Header(default=None, alias="X-User-Name"),
 ):
     """Changing mfa_enforced (either direction) requires a genuine superadmin (see
-    _guard_group_mfa_enforce); setup_wizard/notifications_enabled stay admin-gated
-    like the rest of group management."""
+    _guard_group_mfa_enforce); setup_wizard/notifications_enabled/single_session_enabled/
+    ip_restriction_enabled stay admin-gated like the rest of group management."""
     result = await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))
     group = result.scalar_one_or_none()
     if group is None:
@@ -166,6 +167,8 @@ async def set_group_policies(
         "mfa_enforced": payload.mfa_enforced,
         "setup_wizard": payload.setup_wizard,
         "notifications_enabled": payload.notifications_enabled,
+        "single_session_enabled": payload.single_session_enabled,
+        "ip_restriction_enabled": payload.ip_restriction_enabled,
     }
     await session.commit()
     await session.refresh(group)
@@ -173,6 +176,43 @@ async def set_group_policies(
     await log_action(session, user_id=actor_id, username=actor_name or "", action="group.policies.set",
                      resource_type="user-group", resource_id=group_id, details=group.policies)
     return group
+
+
+async def _get_or_create_ip_restriction(session: AsyncSession, group_id: str) -> ZAGroupIpRestriction:
+    result = await session.execute(select(ZAGroupIpRestriction).where(ZAGroupIpRestriction.group_id == group_id))
+    cfg = result.scalar_one_or_none()
+    if cfg is None:
+        cfg = ZAGroupIpRestriction(group_id=group_id, cidrs=[])
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
+    return cfg
+
+
+@router.get("/users/groups/{group_id}/ip-restriction", dependencies=[Depends(require_admin)])
+async def get_group_ip_restriction(group_id: str, session: AsyncSession = Depends(get_session)):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_ip_restriction(session, group_id)
+    return {"cidrs": cfg.cidrs}
+
+
+@router.put("/users/groups/{group_id}/ip-restriction", dependencies=[Depends(require_admin)])
+async def put_group_ip_restriction(
+    group_id: str,
+    payload: GroupIpRestrictionUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor_id: str | None = Header(default=None, alias="X-User-Id"),
+    actor_name: str | None = Header(default=None, alias="X-User-Name"),
+):
+    if (await session.execute(select(ZAUserGroup).where(ZAUserGroup.id == group_id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="group not found")
+    cfg = await _get_or_create_ip_restriction(session, group_id)
+    cfg.cidrs = payload.cidrs
+    await session.commit()
+    await log_action(session, user_id=actor_id, username=actor_name or "", action="group.ip_restriction.set",
+                     resource_type="user-group", resource_id=group_id, details={"cidrs": payload.cidrs})
+    return {"cidrs": cfg.cidrs}
 
 
 async def _get_or_create_notify_config(session: AsyncSession, group_id: str) -> ZAGroupNotifyConfig:
@@ -252,6 +292,8 @@ async def _user_out(session: AsyncSession, user: ZAUser) -> UserOut:
         totp_enabled=user.totp_enabled,
         mfa_method=user.mfa_method,
         allowed_ips=user.allowed_ips or [],
+        ip_restriction_enabled=user.ip_restriction_enabled,
+        single_session_enabled=user.single_session_enabled,
         created_at=user.created_at,
     )
 
@@ -411,6 +453,10 @@ async def update_user(
         user.password_hash = hash_password(payload.password)
     if payload.allowed_ips is not None:
         user.allowed_ips = payload.allowed_ips
+    if payload.ip_restriction_enabled is not None:
+        user.ip_restriction_enabled = payload.ip_restriction_enabled
+    if payload.single_session_enabled is not None:
+        user.single_session_enabled = payload.single_session_enabled
 
     # Guard before commit: a role change or deactivation must not zero the superadmins.
     await session.flush()

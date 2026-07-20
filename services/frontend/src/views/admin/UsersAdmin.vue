@@ -258,10 +258,21 @@
             <button :class="['fp-toggle', !userForm.is_active && 'active']" @click="userForm.is_active = false">Disabled</button>
           </div>
         </div>
-        <div v-if="editingUser" class="fp-field">
-          <label class="fp-label">Allowed login IPs <span class="fp-opt">(CIDR, one per line — blank = unrestricted)</span></label>
-          <textarea v-model="userForm.allowed_ips_text" class="fp-input" rows="2" placeholder="203.0.113.4/32" style="resize:vertical;font-family:inherit"></textarea>
-        </div>
+        <template v-if="editingUser">
+          <div class="fp-section-head">Security Policies</div>
+          <label class="opt-row">
+            <input type="checkbox" v-model="userForm.single_session_enabled" />
+            <span><b>Enforce single session</b> — logging in elsewhere ends this user's other session immediately.</span>
+          </label>
+          <label class="opt-row">
+            <input type="checkbox" v-model="userForm.ip_restriction_enabled" />
+            <span><b>Restrict login IPs</b> — only allow login from the IPs below.</span>
+          </label>
+          <div v-if="userForm.ip_restriction_enabled" class="fp-field">
+            <label class="fp-label">Allowed login IPs <span class="fp-opt">(CIDR, one per line)</span></label>
+            <textarea v-model="userForm.allowed_ips_text" class="fp-input" rows="2" placeholder="203.0.113.4/32" style="resize:vertical;font-family:inherit"></textarea>
+          </div>
+        </template>
 
         <!-- Groups assignment -->
         <div class="fp-section-head">Group Memberships</div>
@@ -325,6 +336,20 @@
               <option value="medium">Medium and above</option>
               <option value="critical">Critical only</option>
             </select>
+          </div>
+        </template>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.single_session_enabled" />
+          <span><b>Enforce single session</b> — members are logged out of any other session the moment they log in elsewhere.</span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" v-model="groupForm.ip_restriction_enabled" />
+          <span><b>Restrict login IPs</b> — members may only log in from the IPs below. Combines with any individual restriction of theirs — both must match.</span>
+        </label>
+        <template v-if="groupForm.ip_restriction_enabled">
+          <div class="fp-field">
+            <label class="fp-label">Allowed IPs (CIDR, one per line)</label>
+            <textarea v-model="groupForm.ip_cidrs_text" class="fp-input" rows="2" placeholder="203.0.113.0/24" style="resize:vertical;font-family:inherit"></textarea>
           </div>
         </template>
 
@@ -494,7 +519,10 @@ async function deleteGroup(g: any) {
 const showUserPanel = ref(false)
 const editingUser = ref<any>(null)
 const activeUserId = ref<string | null>(null)
-const userForm = reactive({ username: '', display_name: '', email: '', password: '', role_ids: [] as string[], is_active: true, allowed_ips_text: '' })
+const userForm = reactive({
+  username: '', display_name: '', email: '', password: '', role_ids: [] as string[], is_active: true,
+  allowed_ips_text: '', ip_restriction_enabled: false, single_session_enabled: false,
+})
 const userGroupsPicker = ref<PickerItem[]>([])
 const userError = ref('')
 const savingUser = ref(false)
@@ -502,7 +530,10 @@ const savingUser = ref(false)
 function openCreateUser() {
   editingUser.value = null
   activeUserId.value = null
-  Object.assign(userForm, { username: '', display_name: '', email: '', password: '', role_ids: [], is_active: true, allowed_ips_text: '' })
+  Object.assign(userForm, {
+    username: '', display_name: '', email: '', password: '', role_ids: [], is_active: true,
+    allowed_ips_text: '', ip_restriction_enabled: false, single_session_enabled: false,
+  })
   userGroupsPicker.value = []
   userError.value = ''
   showUserPanel.value = true
@@ -515,6 +546,8 @@ function openEditUser(u: any) {
     username: u.username, display_name: u.display_name || '', email: u.email || '',
     password: '', role_ids: [...(u.role_ids || (u.role_id ? [u.role_id] : []))], is_active: u.is_active,
     allowed_ips_text: (u.allowed_ips || []).join('\n'),
+    ip_restriction_enabled: !!u.ip_restriction_enabled,
+    single_session_enabled: !!u.single_session_enabled,
   })
   // Pre-fill group memberships
   userGroupsPicker.value = groups.value
@@ -538,6 +571,8 @@ async function saveUser() {
         role_ids: userForm.role_ids,
         is_active: userForm.is_active,
         allowed_ips: userForm.allowed_ips_text.split('\n').map(s => s.trim()).filter(Boolean),
+        ip_restriction_enabled: userForm.ip_restriction_enabled,
+        single_session_enabled: userForm.single_session_enabled,
       }
       if (userForm.password) payload.password = userForm.password
       await api.put(`/users/${userId}`, payload)
@@ -575,6 +610,7 @@ const editingGroup = ref<any>(null)
 const groupForm = reactive({
   name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false,
   notify_emails_text: '', notify_min_severity: 'medium',
+  single_session_enabled: false, ip_restriction_enabled: false, ip_cidrs_text: '',
 })
 const groupError = ref('')
 const savingGroup = ref(false)
@@ -584,6 +620,7 @@ function openCreateGroup() {
   Object.assign(groupForm, {
     name: '', description: '', mfa_enforced: false, setup_wizard: false, notifications_enabled: false,
     notify_emails_text: '', notify_min_severity: 'medium',
+    single_session_enabled: false, ip_restriction_enabled: false, ip_cidrs_text: '',
   })
   groupError.value = ''
   showGroupPanel.value = true
@@ -597,6 +634,9 @@ async function openEditGroup(g: any) {
     setup_wizard: !!g.policies?.setup_wizard,
     notifications_enabled: !!g.policies?.notifications_enabled,
     notify_emails_text: '', notify_min_severity: 'medium',
+    single_session_enabled: !!g.policies?.single_session_enabled,
+    ip_restriction_enabled: !!g.policies?.ip_restriction_enabled,
+    ip_cidrs_text: '',
   })
   groupError.value = ''
   showGroupPanel.value = true
@@ -605,6 +645,12 @@ async function openEditGroup(g: any) {
       const { data } = await api.get(`/users/groups/${g.id}/notify-config`)
       groupForm.notify_emails_text = (data.emails || []).join('\n')
       groupForm.notify_min_severity = data.min_severity || 'medium'
+    } catch { /* leave defaults if the fetch fails */ }
+  }
+  if (g.policies?.ip_restriction_enabled) {
+    try {
+      const { data } = await api.get(`/users/groups/${g.id}/ip-restriction`)
+      groupForm.ip_cidrs_text = (data.cidrs || []).join('\n')
     } catch { /* leave defaults if the fetch fails */ }
   }
 }
@@ -628,10 +674,16 @@ async function saveGroup() {
       mfa_enforced: groupForm.mfa_enforced,
       setup_wizard: groupForm.setup_wizard,
       notifications_enabled: groupForm.notifications_enabled,
+      single_session_enabled: groupForm.single_session_enabled,
+      ip_restriction_enabled: groupForm.ip_restriction_enabled,
     })
     if (groupForm.notifications_enabled) {
       const emails = groupForm.notify_emails_text.split('\n').map(s => s.trim()).filter(Boolean)
       await api.put(`/users/groups/${groupId}/notify-config`, { emails, min_severity: groupForm.notify_min_severity })
+    }
+    if (groupForm.ip_restriction_enabled) {
+      const cidrs = groupForm.ip_cidrs_text.split('\n').map(s => s.trim()).filter(Boolean)
+      await api.put(`/users/groups/${groupId}/ip-restriction`, { cidrs })
     }
     closeGroupPanel()
     loadGroups()

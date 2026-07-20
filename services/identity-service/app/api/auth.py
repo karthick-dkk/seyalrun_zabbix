@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import json
 import secrets
 import time
@@ -104,6 +103,8 @@ async def _user_out(session: AsyncSession, user: ZAUser, kiosk_host_id: str | No
         totp_enabled=user.totp_enabled,
         mfa_method=user.mfa_method,
         allowed_ips=user.allowed_ips or [],
+        ip_restriction_enabled=user.ip_restriction_enabled,
+        single_session_enabled=user.single_session_enabled,
         must_change_password=user.must_change_password,
         created_at=user.created_at,
         kiosk=bool(kiosk_host_id),
@@ -188,6 +189,7 @@ async def _mint_session(
     policies = await effective_group_policies(session, user.id)
     mfa_setup_required = bool(policies.get("mfa_enforced")) and not mfa_pending
     needs_setup_wizard = bool(policies.get("setup_wizard")) and not user.setup_completed
+    single_session_enabled = bool(user.single_session_enabled) or bool(policies.get("single_session_enabled"))
 
     token = await create_session(
         redis_client,
@@ -197,6 +199,7 @@ async def _mint_session(
         pwc=pwc,
         mfa_pending=mfa_pending,
         mfa_setup_required=mfa_setup_required,
+        single_session_enabled=single_session_enabled,
     )
     if mfa_pending and user.mfa_method == "email":
         await _issue_otp(user, session, "login")
@@ -221,25 +224,6 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
-def _ip_allowed(allowed_ips: list[str], client_ip: str) -> bool:
-    """Empty allowlist = unrestricted (default). A malformed CIDR entry is
-    skipped rather than raising, so one bad entry can't lock every login out;
-    a malformed/unresolvable client_ip fails closed (denied), not open."""
-    if not allowed_ips:
-        return True
-    if not client_ip:
-        return False
-    try:
-        addr = ipaddress.ip_address(client_ip)
-    except ValueError:
-        return False
-    for cidr in allowed_ips:
-        try:
-            if addr in ipaddress.ip_network(cidr, strict=False):
-                return True
-        except ValueError:
-            continue
-    return False
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -280,7 +264,9 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
     # from a disallowed IP still counts toward lockout exactly as it does today,
     # so this reveals no extra information about IP policy to an attacker who
     # hasn't already proven they know a valid password.
-    if not _ip_allowed(user.allowed_ips or [], ip):
+    from ..grouppolicy import ip_login_allowed
+
+    if not await ip_login_allowed(session, user, ip):
         await log_action(
             session, user_id=user.id, username=user.username, action="login_denied_ip",
             resource_type="session", ip_address=ip,
@@ -404,8 +390,10 @@ async def sso_exchange(payload: SSOExchangeRequest, request: Request, session: A
     # Same IP policy as /login — SSO is a parallel credential path (already fixed
     # for the equivalent MFA-bypass gap this session), so it must honor a user's
     # allowed_ips restriction too, not just password login.
+    from ..grouppolicy import ip_login_allowed
+
     ip = _client_ip(request)
-    if not _ip_allowed(user.allowed_ips or [], ip):
+    if not await ip_login_allowed(session, user, ip):
         await log_action(
             session, user_id=user.id, username=user.username, action="login_denied_ip",
             resource_type="session", ip_address=ip,
@@ -545,15 +533,18 @@ async def mfa_enable(
 
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
+    # Enrollment may have just satisfied a group's mfa_enforced requirement — check
+    # whether the SAME group (or another) also wants the setup wizard shown next,
+    # and whether single-session applies (user-level or group-level).
+    policies = await effective_group_policies(session, user.id)
+    needs_setup_wizard = bool(policies.get("setup_wizard")) and not user.setup_completed
+    single_session_enabled = bool(user.single_session_enabled) or bool(policies.get("single_session_enabled"))
     token = await create_session(
         redis_client,
         user_id=user.id, username=user.username, role=primary, roles=roles,
         idle_minutes=settings.session_idle_minutes,
+        single_session_enabled=single_session_enabled,
     )
-    # Enrollment may have just satisfied a group's mfa_enforced requirement — check
-    # whether the SAME group (or another) also wants the setup wizard shown next.
-    policies = await effective_group_policies(session, user.id)
-    needs_setup_wizard = bool(policies.get("setup_wizard")) and not user.setup_completed
     return TokenResponse(access_token=token, user=await _user_out(session, user), needs_setup_wizard=needs_setup_wizard)
 
 
@@ -629,16 +620,18 @@ async def mfa_verify_login(
 
     settings = get_settings()
     roles, primary = await _resolve_roles(session, user.id, user.role_id)
+    policies = await effective_group_policies(session, user.id)
+    single_session_enabled = bool(user.single_session_enabled) or bool(policies.get("single_session_enabled"))
     token = await create_session(
         redis_client,
         user_id=user.id, username=user.username, role=primary, roles=roles,
         idle_minutes=settings.session_idle_minutes,
+        single_session_enabled=single_session_enabled,
     )
     await log_action(
         session, user_id=user.id, username=user.username, action="mfa.verify_login",
-        resource_type="session", ip_address=request.client.host if request.client else "",
+        resource_type="session", ip_address=_client_ip(request),
     )
-    policies = await effective_group_policies(session, user.id)
     needs_setup_wizard = bool(policies.get("setup_wizard")) and not user.setup_completed
     return TokenResponse(access_token=token, user=await _user_out(session, user), needs_setup_wizard=needs_setup_wizard)
 

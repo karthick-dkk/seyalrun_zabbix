@@ -44,6 +44,8 @@ class UserOut(BaseModel):
     totp_enabled: bool = False
     mfa_method: str | None = None  # "totp" | "email" | None
     allowed_ips: list[str] = Field(default_factory=list)  # CIDR list; empty = unrestricted
+    ip_restriction_enabled: bool = False  # explicit opt-in toggle, v1.3
+    single_session_enabled: bool = False  # opt-in per user (or via group), v1.3
     must_change_password: bool = False
     created_at: datetime
     # Server-asserted for this login only (session-scoped, not a DB attribute of
@@ -94,6 +96,8 @@ class UserUpdate(BaseModel):
     role_ids: list[str] | None = None   # v1.1 multi-role assignment
     is_active: bool | None = None
     allowed_ips: list[str] | None = None  # CIDR list; None = unchanged, [] = clear
+    ip_restriction_enabled: bool | None = None
+    single_session_enabled: bool | None = None
 
 
 class RoleOut(BaseModel):
@@ -145,11 +149,17 @@ class GroupPoliciesUpdate(BaseModel):
     mfa_enforced: bool = False
     setup_wizard: bool = False
     notifications_enabled: bool = False
+    single_session_enabled: bool = False
+    ip_restriction_enabled: bool = False
 
 
 class GroupNotifyConfigUpdate(BaseModel):
     emails: list[str] = Field(default_factory=list)
     min_severity: str = "medium"  # info | medium | critical
+
+
+class GroupIpRestrictionUpdate(BaseModel):
+    cidrs: list[str] = Field(default_factory=list)
 
 
 class AuthorizationCreate(BaseModel):
