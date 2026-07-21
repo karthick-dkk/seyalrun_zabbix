@@ -187,6 +187,11 @@ class AuthorizationOut(AuthorizationCreate):
 
     id: str
     created_at: datetime
+    # Server-controlled — never accepted as client input (see AuthorizationCreate).
+    status: str = "pending_approval"
+    requested_by: str | None = None
+    approved_by: str | None = None
+    approved_at: datetime | None = None
 
 
 class CommandGroupCreate(BaseModel):

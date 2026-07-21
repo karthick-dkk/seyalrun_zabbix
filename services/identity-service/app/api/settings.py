@@ -98,6 +98,9 @@ class PlatformSettingsIn(BaseModel):
     # PCI DSS Phase A JIT elevation window (see app/sessions.py::elevate) — how long
     # an admin/superadmin's re-proved-MFA elevation lasts before it must be renewed.
     elevated_session_minutes: int = 30
+    # PCI DSS Phase B (7.2.4) — default expiry applied to an authorization when the
+    # creator doesn't set one explicitly (see api/authorizations.py::_apply).
+    authorization_default_ttl_days: int = 90
 
 
 class ZabbixModuleSettingsIn(BaseModel):
@@ -148,6 +151,7 @@ async def put_platform(
         "session_idle_minutes": max(1, min(payload.session_idle_minutes, 1440)),
         "session_absolute_hours": max(1, min(payload.session_absolute_hours, 168)),
         "elevated_session_minutes": max(5, min(payload.elevated_session_minutes, 240)),
+        "authorization_default_ttl_days": max(1, min(payload.authorization_default_ttl_days, 3650)),
         "log_level": payload.log_level.upper() if payload.log_level.upper() in
             ("DEBUG", "INFO", "WARNING", "ERROR") else "INFO",
     }

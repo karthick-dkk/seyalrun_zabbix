@@ -181,6 +181,13 @@ class ZALogBackendConfig(Base):
     # Content routing: log category -> list of backends ("local"|"elasticsearch"|"s3").
     # Categories: app, command, audit, recording. Admin-managed in the Log Backend UI.
     routing: Mapped[dict] = mapped_column(JSON, default=dict)
+    # PCI DSS Phase B (10.5.1): per-category retention, admin-editable alongside
+    # routing instead of a hardcoded .env global. Shape: {"audit_days": 180}.
+    # Extensible per category without a new migration each time (mirrors routing's
+    # own JSON-doc convention). Currently only "audit_days" is read (housekeeping.py's
+    # audit_log_archive job); absent/empty falls back to identity-service's own
+    # AUDIT_LOG_RETENTION_DAYS .env default.
+    retention: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

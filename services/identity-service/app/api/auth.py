@@ -228,7 +228,7 @@ def _client_ip(request: Request) -> str:
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, request: Request, session: AsyncSession = Depends(get_session)):
-    from .._lockout import attempt_key, check_locked, clear, record_failure
+    from .._lockout import attempt_key, check_locked, clear, distinct_username_failures, record_failure
 
     settings = get_settings()
     ip = _client_ip(request)
@@ -251,8 +251,19 @@ async def login(payload: LoginRequest, request: Request, session: AsyncSession =
         )
         await log_action(
             session, user_id="", username=payload.username, action="login_failed",
-            resource_type="session", ip_address=ip,
+            resource_type="session", ip_address=ip, result="failure",
         )
+        # PCI DSS Phase B: distinct usernames failing from one IP is the
+        # credential-stuffing/spray signature — a different signal than a single
+        # account's repeated failures, which the existing lockout already handles.
+        spike = await distinct_username_failures(session, ip, settings.login_attempt_window_seconds)
+        if spike >= settings.login_spike_threshold:
+            from .._alerts import fire_security_alert
+            await fire_security_alert(
+                severity="critical", title=f"Login spike from {ip}",
+                message=f"{spike} distinct accounts failed login from this IP within the attempt window.",
+                source_type="login_spike", source_id=ip,
+            )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid username or password")
 
     await clear(session, key)  # successful login resets the counter

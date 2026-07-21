@@ -73,6 +73,30 @@ async def create_run_internal(
     return {"run_id": run_id}
 
 
+class InternalNotificationCreate(BaseModel):
+    user_id: str | None = None
+    severity: str = "info"  # info | medium | critical
+    title: str
+    message: str = ""
+    source_type: str = "external"
+    source_id: str | None = None
+
+
+@router.post("/internal/notifications", status_code=status.HTTP_201_CREATED)
+async def create_notification_internal(payload: InternalNotificationCreate):
+    """PCI DSS Phase B: lets other services raise a real in-app + emailed alert
+    without touching mail credentials or notification plumbing themselves — e.g.
+    inventory-service's rotation-due sweep, identity-service's security-event
+    alerts (privileged role grants, audit-chain write failures, login spikes)."""
+    from app.runner import create_notification
+
+    notif = await create_notification(
+        user_id=payload.user_id, severity=payload.severity, title=payload.title,
+        message=payload.message, source_type=payload.source_type, source_id=payload.source_id,
+    )
+    return {"id": notif.id}
+
+
 @router.get("/internal/job-runs/{run_id}")
 async def get_run_internal(run_id: str, session: AsyncSession = Depends(get_session)):
     run = await session.get(ZAJobRun, run_id)

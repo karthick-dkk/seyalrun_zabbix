@@ -32,21 +32,18 @@ def get_redis() -> aioredis.Redis:
     return _redis
 
 
-async def _notify_completion(run_id: str, template_name: str, triggered_by: str | None, final_status: str) -> None:
-    # Only "user:<id>"-triggered runs target a specific inbox; anything else
-    # (schedule/zabbix/chain-step, or no notify-worthy status) broadcasts to everyone.
-    user_id = None
-    if triggered_by and triggered_by.startswith("user:"):
-        user_id = triggered_by[len("user:"):]
-    severity = _SEVERITY_BY_STATUS.get(final_status)
-    if severity is None:
-        return
+async def create_notification(
+    *, user_id: str | None, severity: str, title: str, source_type: str,
+    source_id: str | None = None, message: str = "",
+) -> ZANotification:
+    """The one place a ZANotification gets created — in-app row + redis pub/sub
+    fan-out + best-effort per-group email dispatch (see _dispatch_group_alert).
+    Used both in-process (job-run completion below) and via POST /internal/
+    notifications for other services (PCI DSS Phase B: inventory-service's
+    rotation-due sweep, identity-service's security-event alerts)."""
     notif = ZANotification(
-        user_id=user_id,
-        severity=severity,
-        title=f"{template_name or 'Job'}: {final_status}",
-        source_type="job_run",
-        source_id=run_id,
+        user_id=user_id, severity=severity, title=title, message=message,
+        source_type=source_type, source_id=source_id,
     )
     async with SessionLocal() as session:
         session.add(notif)
@@ -55,7 +52,7 @@ async def _notify_completion(run_id: str, template_name: str, triggered_by: str 
     channel = f"notifications:{user_id}" if user_id else "notifications:broadcast"
     payload = json.dumps({
         "id": notif.id, "severity": severity, "title": notif.title, "message": notif.message,
-        "source_type": "job_run", "source_id": run_id,
+        "source_type": source_type, "source_id": source_id,
         "created_at": notif.created_at.isoformat() if notif.created_at else None,
     })
     await get_redis().publish(channel, payload)
@@ -66,6 +63,22 @@ async def _notify_completion(run_id: str, template_name: str, triggered_by: str 
     # path above, which has already succeeded independently of this.
     if user_id:
         await _dispatch_group_alert(user_id, severity, notif.title)
+    return notif
+
+
+async def _notify_completion(run_id: str, template_name: str, triggered_by: str | None, final_status: str) -> None:
+    # Only "user:<id>"-triggered runs target a specific inbox; anything else
+    # (schedule/zabbix/chain-step, or no notify-worthy status) broadcasts to everyone.
+    user_id = None
+    if triggered_by and triggered_by.startswith("user:"):
+        user_id = triggered_by[len("user:"):]
+    severity = _SEVERITY_BY_STATUS.get(final_status)
+    if severity is None:
+        return
+    await create_notification(
+        user_id=user_id, severity=severity, title=f"{template_name or 'Job'}: {final_status}",
+        source_type="job_run", source_id=run_id,
+    )
 
 
 async def _dispatch_group_alert(user_id: str, severity: str, title: str) -> None:

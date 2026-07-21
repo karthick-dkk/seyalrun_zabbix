@@ -181,6 +181,15 @@ class ZAAuthorization(Base):
     date_expired: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # PCI DSS Phase B — segregation of duties: a grant is inert (enabled forced False)
+    # from creation/edit until a DIFFERENT admin/superadmin approves it (self-approval
+    # blocked in the API layer). status mirrors ZAJobTemplate.requires_approval's
+    # request/approve shape one model over. "enabled" stays the sole enforcement flag
+    # every resolver already checks — approval just controls when it flips True.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending_approval")
+    requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ZACommandGroup(Base):
