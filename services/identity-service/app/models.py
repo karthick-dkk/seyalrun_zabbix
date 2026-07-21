@@ -80,6 +80,13 @@ class ZAUser(Base):
     # all its members (za_user_groups.policies.single_session_enabled), most-restrictive-
     # wins: enforced if EITHER this OR any of the user's groups has it on.
     single_session_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # PCI DSS Phase C — service account registry: a real object-type flag (not a
+    # naming convention or role) so service accounts can be scoped/reviewed/
+    # offboarded separately from human users. account_type is the human-readable
+    # label; is_service_account is what code branches on (kept both — mirrors
+    # mfa_method/totp_enabled's "flag + label" pairing above).
+    is_service_account: Mapped[bool] = mapped_column(Boolean, default=False)
+    account_type: Mapped[str] = mapped_column(String(20), default="human")  # human|service
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -327,6 +334,46 @@ class ZAMailSettings(Base):
     graph_sender_upn: Mapped[str] = mapped_column(String(320), default="")
 
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ZAAccessReviewCampaign(Base):
+    """PCI DSS Phase C (7.2.4 periodic access review) — MVP: a labeled snapshot
+    of every currently-active ZAAuthorization at creation time, walked to
+    keep/revoke by an admin. Not a full GRC module — no role/group scope
+    filtering, no multi-reviewer workflow — just enough to satisfy "reviewed
+    on a schedule, with a record of who decided what."""
+
+    __tablename__ = "za_access_review_campaigns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")  # open|completed
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    items: Mapped[list["ZAAccessReviewItem"]] = relationship(
+        "ZAAccessReviewItem", back_populates="campaign", lazy="select"
+    )
+
+
+class ZAAccessReviewItem(Base):
+    __tablename__ = "za_access_review_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("za_access_review_campaigns.id", ondelete="CASCADE"), nullable=False
+    )
+    authorization_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # Snapshot at campaign-creation time, so the item still reads sensibly even if the
+    # underlying authorization is later edited/revoked/deleted out from under it.
+    authorization_name: Mapped[str] = mapped_column(String(200), default="")
+    decision: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending|keep|revoke
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    campaign: Mapped[ZAAccessReviewCampaign] = relationship("ZAAccessReviewCampaign", back_populates="items")
 
 
 class ZASetting(Base):

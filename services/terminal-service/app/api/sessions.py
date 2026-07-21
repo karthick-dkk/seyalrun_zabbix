@@ -371,3 +371,34 @@ async def terminate_session(
         resource_id=session_id,
         details={"terminated_by": user_id},
     )
+
+
+@router.post("/internal/ssh/sessions/terminate-by-user")
+async def terminate_sessions_by_user(target_user_id: str, db: AsyncSession = Depends(get_session)):
+    """PCI DSS Phase C — called by identity-service's deprovisioning webhook to
+    kill every active/pending session for a user being deactivated, immediately.
+    Service-token-gated only (router-level) — no X-User-Id trust needed, this
+    always acts on the explicit target_user_id, never "the caller"."""
+    from ..main import _terminate_events
+
+    result = await db.execute(
+        select(ZASSHSession).where(ZASSHSession.user_id == target_user_id, ZASSHSession.status.in_(("active", "pending")))
+    )
+    rows = result.scalars().all()
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        row.status = "terminated"
+        row.ended_at = now
+        event = _terminate_events.get(row.id)
+        if event:
+            event.set()
+    if rows:
+        await db.commit()
+
+    for row in rows:
+        await log_action(
+            user_id=target_user_id, username=row.username, action="session.terminate",
+            resource_type="ssh_session", resource_id=row.id,
+            details={"terminated_by": "deprovision_webhook"},
+        )
+    return {"terminated": len(rows)}

@@ -119,6 +119,11 @@ class ZACredential(Base):
     username: Mapped[str] = mapped_column(String(100), nullable=False)
     secret_type: Mapped[str] = mapped_column(String(20), default="password")  # password|ssh_key|vault_path
     secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    # PCI DSS Phase C key hierarchy: the per-row DEK that encrypted secret_ciphertext,
+    # wrapped by the active KeyProvider (see app/vault.py). NULL on rows written before
+    # this shipped — decrypt() falls back to the old single-KEK scheme for those; every
+    # new write (create/update/rotate) populates it going forward.
+    wrapped_dek: Mapped[str | None] = mapped_column(Text, nullable=True)
     credential_scope: Mapped[str] = mapped_column(String(20), default="host")  # host|template
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     is_sudo: Mapped[bool] = mapped_column(Boolean, default=False)  # privilege escalation for account ops

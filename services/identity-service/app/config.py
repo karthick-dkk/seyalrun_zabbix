@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # identity-service growing its own in-app notification/email plumbing.
     automation_service_url: str = "http://automation-service:8105"
 
+    # PCI DSS Phase C — deprovisioning webhook kills every active session for the
+    # deactivated user immediately (see api/users.py::deprovision_user).
+    terminal_service_url: str = "http://terminal-service:8103"
+
     frontend_origin: str = ""
 
     audit_log_retention_days: int = 180

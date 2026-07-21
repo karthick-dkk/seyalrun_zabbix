@@ -30,6 +30,7 @@ SERVICE_ROUTES: dict[str, tuple[str, str]] = {
     "users": ("identity_service_url", "identity-service"),
     "roles": ("identity_service_url", "identity-service"),
     "authorizations": ("identity_service_url", "identity-service"),
+    "access-reviews": ("identity_service_url", "identity-service"),
     "command-groups": ("identity_service_url", "identity-service"),
     "command-filters": ("identity_service_url", "identity-service"),
     "login-acls": ("identity_service_url", "identity-service"),
@@ -85,6 +86,13 @@ async def proxy(request: Request, path: str, identity: dict) -> Response:
     headers["X-User-Name"] = identity.get("username", "")
     if identity.get("kiosk_host_id"):
         headers["X-Kiosk-Host-Id"] = identity["kiosk_host_id"]
+    # PCI DSS Phase C — a Personal Access Token's scopes (see identity-service's
+    # api/tokens.py), forwarded so a downstream endpoint can require a specific
+    # scope (e.g. "deprovision") beyond the caller's ordinary role capability.
+    # Absent entirely for a session-cookie caller (identity.get("scopes") is only
+    # ever populated for PAT-based auth — see api-gateway/app/security.py::verify_pat).
+    if identity.get("scopes"):
+        headers["X-User-Scopes"] = ",".join(identity["scopes"])
     # PCI DSS Phase A JIT elevation — unix timestamp the elevated window expires at,
     # or absent entirely if the user has none active. Downstream services (terminal-
     # service, inventory-service) treat this as the sole source of truth; it is never

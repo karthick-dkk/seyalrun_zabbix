@@ -65,6 +65,7 @@ BUILTIN_ROLE_PERMS: dict[str, dict] = {
         "perms": {
             **_grant(_INVENTORY + _ZONES + _AUTOMATION + _SELF),
             "authorizations": list(ALL_METHODS),
+            "access-reviews": list(ALL_METHODS),  # PCI DSS Phase C — can revoke access, admin-only (not support)
             "audit": ["GET"],
             "users": ["GET", "PUT"],   # edit existing users; cannot create (POST)
             "roles": ["GET"],          # view only; cannot create/edit role definitions

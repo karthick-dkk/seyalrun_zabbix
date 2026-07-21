@@ -21,7 +21,7 @@ from ..schemas import (
     CredentialTemplateCreate,
     CredentialTemplateOut,
 )
-from ..vault import VaultDecryptError, decrypt, encrypt
+from ..vault import VaultDecryptError, decrypt, decrypt_envelope, encrypt_envelope
 
 router = APIRouter(tags=["credentials"], dependencies=[Depends(require_service_token)])
 
@@ -33,6 +33,21 @@ def _kind(secret_type: str) -> CredentialKind:
     if kind is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unknown secret_type '{secret_type}'")
     return kind
+
+
+def _encrypt_secret(plaintext: str) -> tuple[str, str]:
+    """PCI DSS Phase C: every new write goes through the envelope scheme —
+    returns (ciphertext, wrapped_dek), both must be stored together."""
+    return encrypt_envelope(plaintext)
+
+
+def _decrypt_secret(cred: ZACredential) -> str:
+    """wrapped_dek is NULL on rows written before Phase C shipped — fall back to
+    the old single-KEK decrypt() for those; every row gets migrated to the
+    envelope scheme automatically the next time it's written (update/rotate)."""
+    if cred.wrapped_dek:
+        return decrypt_envelope(cred.secret_ciphertext, cred.wrapped_dek)
+    return decrypt(cred.secret_ciphertext)
 
 
 def _strength_score(secret_type: str, secret: dict) -> int | None:
@@ -143,7 +158,7 @@ async def create_credential(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    ciphertext = encrypt(kind.encode(payload.secret))
+    ciphertext, wrapped_dek = _encrypt_secret(kind.encode(payload.secret))
 
     cred = ZACredential(
         name=payload.name,
@@ -151,6 +166,7 @@ async def create_credential(
         username=payload.username,
         secret_type=payload.secret_type,
         secret_ciphertext=ciphertext,
+        wrapped_dek=wrapped_dek,
         credential_scope=payload.credential_scope,
         is_default=payload.is_default,
         is_sudo=payload.is_sudo,
@@ -202,7 +218,7 @@ async def update_credential(
             kind.validate(payload.secret)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        cred.secret_ciphertext = encrypt(kind.encode(payload.secret))
+        cred.secret_ciphertext, cred.wrapped_dek = _encrypt_secret(kind.encode(payload.secret))
         cred.strength_score = _strength_score(payload.secret_type, payload.secret)
 
     existing = await session.execute(select(ZACredentialHostLink).where(ZACredentialHostLink.credential_id == credential_id))
@@ -347,7 +363,7 @@ async def reveal_credential(
 
     kind = _kind(cred.secret_type)
     try:
-        secret = kind.decode(decrypt(cred.secret_ciphertext))
+        secret = kind.decode(_decrypt_secret(cred))
     except VaultDecryptError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
@@ -373,7 +389,7 @@ async def get_credential_secret(credential_id: str, session: AsyncSession = Depe
 
     kind = _kind(cred.secret_type)
     try:
-        secret = kind.decode(decrypt(cred.secret_ciphertext))
+        secret = kind.decode(_decrypt_secret(cred))
     except VaultDecryptError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
     return CredentialSecretOut(
@@ -410,7 +426,7 @@ async def update_credential_secret(
             rotated_by=actor_id or None,
         ))
 
-    cred.secret_ciphertext = encrypt(kind.encode(payload.secret))
+    cred.secret_ciphertext, cred.wrapped_dek = _encrypt_secret(kind.encode(payload.secret))
     cred.strength_score = _strength_score(cred.secret_type, payload.secret)
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
