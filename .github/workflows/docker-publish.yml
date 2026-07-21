@@ -62,6 +62,11 @@ jobs:
           # under QEMU's arm64 emulation (SIGILL, "uncaught target signal 4").
           # It's a static nginx-served bundle, not arch-sensitive at runtime.
           platforms: ${{ matrix.service == 'frontend' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          # Only the frontend reads this (baked into the Vite bundle as VITE_APP_VERSION
+          # for the sidebar's release-version display) — harmless no-op build-arg for
+          # every other service's Dockerfile, which doesn't declare ARG APP_VERSION.
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.version }}
           push: true
           tags: |
             ${{ env.DOCKERHUB_NAMESPACE }}/seyalrun-${{ matrix.service }}:${{ steps.ver.outputs.version }}
