@@ -330,8 +330,13 @@ async def reveal_credential(
     if cred is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="credential not found")
 
+    # Fail CLOSED, not open: a missing actor_id must never silently skip the PAM
+    # check below (it did, briefly — caught by review before this shipped further).
+    if not actor_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user identity required")
+
     elevation_used = False
-    if actor_id and not await _credential_authorized_for_reveal(session, credential_id, actor_id, settings):
+    if not await _credential_authorized_for_reveal(session, credential_id, actor_id, settings):
         if actor_role in ("admin", "superadmin") and elevation_active(elevated_until):
             elevation_used = True
         else:
