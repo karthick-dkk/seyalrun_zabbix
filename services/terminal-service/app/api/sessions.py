@@ -165,10 +165,12 @@ async def create_session(
     host_name: str = host_data.get("name", "")
     zone_id: str | None = host_data.get("zone_id")
 
-    # 5. Use explicit gateway_id only — never auto-assign from zone.
-    # Auto-assignment was causing every host in a zone to be forced through a
-    # gateway even for direct-reachable hosts.  Callers that need ProxyJump
-    # must pass gateway_id explicitly.
+    # 5. gateway_id itself is no longer read anywhere — the WS handler now derives
+    # the ProxyJump chain live at connect time from the host's zone (and that
+    # zone's ancestor chain), not from a value frozen into this row. A zone/ancestor
+    # with no gateway configured simply contributes no hop, so direct-reachable
+    # hosts in an otherwise-gatewayed zone are unaffected. Kept as a column purely
+    # so the field still round-trips for any caller still setting it.
     gateway_id = payload.gateway_id
 
     # 6. Kiosk: same user + same (bound) host — block a second concurrent session,

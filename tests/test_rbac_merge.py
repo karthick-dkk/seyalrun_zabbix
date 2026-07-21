@@ -85,3 +85,19 @@ class TestBypassAuthz:
         # this is the crux: capability is necessary, not sufficient.
         assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["user"], "POST", "ssh") is True
         assert rc.bypasses_authz(["user"]) is False
+
+
+class TestZoneCapability:
+    """Zone/gateway management (ProxyJump chain topology) is admin-only — support
+    keeps the rest of inventory CRUD but loses zones specifically."""
+
+    def test_admin_manages_zones(self):
+        assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["admin"], "PUT", "zones") is True
+
+    def test_support_cannot_manage_zones(self):
+        assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["support"], "GET", "zones") is False
+        assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["support"], "PUT", "zones") is False
+
+    def test_support_keeps_other_inventory_segments(self):
+        for seg in ("hosts", "host-groups", "credentials", "credential-templates"):
+            assert rc.role_allows(rc.BUILTIN_ROLE_PERMS["support"], "GET", seg) is True

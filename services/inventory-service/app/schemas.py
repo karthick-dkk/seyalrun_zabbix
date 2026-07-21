@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ZoneCreate(BaseModel):
     name: str
     description: str = ""
+    parent_zone_id: str | None = None
 
 
 class ZoneOut(ZoneCreate):

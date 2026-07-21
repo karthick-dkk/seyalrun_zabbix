@@ -3,70 +3,37 @@ from __future__ import annotations
 import asyncio
 import time
 
-import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.servicetoken import mint
-
-from ..config import get_settings
 from ..database import get_session
 from ..deps import require_admin, require_service_token
-from ..models import ZAHost, ZAHostGroupMember, ZAGateway, ZAZone
+from ..models import ZAGateway, ZAZone
 from ..schemas import GatewayCreate, GatewayOut, ZoneCreate, ZoneOut
 
 router = APIRouter(tags=["zones"], dependencies=[Depends(require_service_token)])
 
 
-async def require_admin_or_zone_authorized(
-    zone_id: str,
-    # X-User-Real-Role, NOT X-User-Role: the gateway "vouches" any capability-authorized
-    # write up to X-User-Role: admin (rbac.downstream_role) so ordinary admin-gated CRUD
-    # guards keep working unmodified for custom roles — but that means X-User-Role can't
-    # tell a real admin from a vouched-for support write. X-User-Real-Role carries the
-    # caller's actual role, which this resource-scoped check needs.
-    role: str = Header(default="user", alias="X-User-Real-Role"),
-    user_id: str = Header(default="", alias="X-User-Id"),
-    session: AsyncSession = Depends(get_session),
-) -> None:
-    """Zone *editing* (not create/delete) additionally opens to the 'support' role
-    when they hold a za_authorization for at least one host in this zone — 'support'
-    already has zones:PUT capability in the role matrix (libs.rbaccore), but isn't
-    in the admin/superadmin authz-bypass set, so it needs this resource-scoped check
-    same as every other resource action that role can reach. Mirrors how a user
-    "manages" a zone today: by being authorized against the hosts inside it."""
-    if role in ("admin", "superadmin"):
+async def _validate_parent_zone(session: AsyncSession, zone_id: str | None, parent_zone_id: str | None) -> None:
+    """Zone nesting forms the ProxyJump chain (root ancestor connects first, this
+    zone's own gateway is the last hop before the target host) — a cycle would make
+    chain resolution loop forever, so it's rejected here rather than at connect time."""
+    if not parent_zone_id:
         return
-    if role != "support" or not user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin role required")
-
-    settings = get_settings()
-    tok = mint("inventory-service", "identity-service", settings.service_jwt_secret)
-    async with httpx.AsyncClient(base_url=settings.identity_service_url, timeout=10) as client:
-        resp = await client.get(
-            "/api/v1/internal/authz/host-ids",
-            params={"user_id": user_id, "strict": "true"},
-            headers={"X-Service-Token": tok},
-        )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="could not resolve host authorization")
-    data = resp.json()
-    host_ids = set(data.get("host_ids") or [])
-    group_ids = set(data.get("host_group_ids") or [])
-    if group_ids:
-        member_result = await session.execute(
-            select(ZAHostGroupMember.host_id).where(ZAHostGroupMember.group_id.in_(group_ids))
-        )
-        host_ids.update(h for (h,) in member_result.all())
-    if not host_ids:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not authorized for any host in this zone")
-
-    count_result = await session.execute(
-        select(ZAHost.id).where(ZAHost.zone_id == zone_id, ZAHost.id.in_(host_ids)).limit(1)
-    )
-    if count_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not authorized for any host in this zone")
+    if parent_zone_id == zone_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="zone cannot be its own parent")
+    result = await session.execute(select(ZAZone.id).where(ZAZone.id == parent_zone_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="parent zone not found")
+    current_id = parent_zone_id
+    seen: set[str] = set()
+    while current_id and current_id not in seen:
+        if current_id == zone_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="parent assignment would create a zone cycle")
+        seen.add(current_id)
+        row = await session.execute(select(ZAZone.parent_zone_id).where(ZAZone.id == current_id))
+        current_id = (row.first() or (None,))[0]
 
 
 @router.get("/zones", response_model=list[ZoneOut])
@@ -80,6 +47,7 @@ async def create_zone(payload: ZoneCreate, session: AsyncSession = Depends(get_s
     existing = await session.execute(select(ZAZone).where(ZAZone.name == payload.name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="zone name already exists")
+    await _validate_parent_zone(session, None, payload.parent_zone_id)
     zone = ZAZone(**payload.model_dump())
     session.add(zone)
     await session.commit()
@@ -87,17 +55,57 @@ async def create_zone(payload: ZoneCreate, session: AsyncSession = Depends(get_s
     return zone
 
 
-@router.put("/zones/{zone_id}", response_model=ZoneOut, dependencies=[Depends(require_admin_or_zone_authorized)])
+@router.put("/zones/{zone_id}", response_model=ZoneOut, dependencies=[Depends(require_admin)])
 async def update_zone(zone_id: str, payload: ZoneCreate, session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(ZAZone).where(ZAZone.id == zone_id))
     zone = result.scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="zone not found")
+    await _validate_parent_zone(session, zone_id, payload.parent_zone_id)
     for field, value in payload.model_dump().items():
         setattr(zone, field, value)
     await session.commit()
     await session.refresh(zone)
     return zone
+
+
+@router.get("/internal/zones/{zone_id}/gateway-chain")
+async def zone_gateway_chain(zone_id: str, session: AsyncSession = Depends(get_session)):
+    """Ordered ProxyJump hop list for connecting to a host in this zone — walks the
+    zone's parent_zone_id ancestry from the outermost ancestor down to this zone
+    (each zone contributes at most one hop, its first-created gateway), so nesting
+    zones is how a multi-hop chain is built. Called by terminal-service (and,
+    eventually, automation-service) instead of a single explicit gateway_id."""
+    zones: list[ZAZone] = []
+    seen: set[str] = set()
+    current_id: str | None = zone_id
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        result = await session.execute(select(ZAZone).where(ZAZone.id == current_id))
+        zone = result.scalar_one_or_none()
+        if zone is None:
+            break
+        zones.append(zone)
+        current_id = zone.parent_zone_id
+    zones.reverse()  # root ancestor first, target zone last
+
+    hops = []
+    for z in zones:
+        gw_result = await session.execute(
+            select(ZAGateway).where(ZAGateway.zone_id == z.id).order_by(ZAGateway.created_at).limit(1)
+        )
+        gw = gw_result.scalar_one_or_none()
+        if gw is not None:
+            hops.append({
+                "id": gw.id,
+                "zone_id": z.id,
+                "zone_name": z.name,
+                "host": gw.host,
+                "port": gw.port,
+                "username": gw.username,
+                "credential_id": gw.credential_id,
+            })
+    return {"chain": hops}
 
 
 @router.delete("/zones/{zone_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])

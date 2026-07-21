@@ -8,11 +8,12 @@
       </div>
       <table class="table">
         <thead>
-          <tr><th>Name</th><th>Description</th><th>Gateways</th><th>Created</th><th></th></tr>
+          <tr><th>Name</th><th>Parent Zone</th><th>Description</th><th>Gateways</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="z in zones" :key="z.id">
             <td style="font-weight:600"><span class="zone-badge"><span class="zone-badge-icon">⊕</span>{{ z.name }}</span></td>
+            <td style="color:var(--text2);font-size:12px">{{ zoneName(z.parent_zone_id) }}</td>
             <td style="color:var(--text2)">{{ z.description || '—' }}</td>
             <td style="color:var(--text2);font-size:12px">{{ gatewayCount(z.id) }}</td>
             <td style="color:var(--text2);font-size:12px">{{ formatDate(z.created_at) }}</td>
@@ -77,6 +78,13 @@
         <div class="modal-body">
           <div class="form-group"><label class="form-label">Name</label><input v-model="zoneForm.name" class="input" placeholder="e.g. dc-east" /></div>
           <div class="form-group"><label class="form-label">Description</label><input v-model="zoneForm.description" class="input" placeholder="Optional description" /></div>
+          <div class="form-group">
+            <label class="form-label">Parent Zone <span style="color:var(--text2);font-weight:400">(optional — for multi-hop ProxyJump chains)</span></label>
+            <select v-model="zoneForm.parent_zone_id" class="input">
+              <option value="">— No Parent (direct) —</option>
+              <option v-for="z in parentZoneOptions" :key="z.id" :value="z.id">{{ z.name }}</option>
+            </select>
+          </div>
           <div v-if="zoneError" style="color:var(--danger);font-size:12px">{{ zoneError }}</div>
         </div>
         <div class="modal-footer">
@@ -171,6 +179,14 @@ function gatewayCount(zoneId: string) {
   return allGateways.value.filter(g => g.zone_id === zoneId).length
 }
 function formatDate(d: string) { return new Date(d).toLocaleDateString() }
+const zoneById = computed(() => new Map(zones.value.map(z => [z.id, z])))
+function zoneName(id: string | null) {
+  if (!id) return '—'
+  return zoneById.value.get(id)?.name || id
+}
+// Excludes the zone being edited itself — full cycle prevention (ruling out its
+// descendants too) is enforced server-side and surfaced via zoneError on save.
+const parentZoneOptions = computed(() => zones.value.filter(z => z.id !== editingZone.value?.id))
 
 async function loadZones() {
   loading.value = true
@@ -205,19 +221,19 @@ async function loadAllGateways() {
 // ── Create / Edit Zone ────────────────────────────────────────────────────
 const showZoneModal = ref(false)
 const editingZone = ref<any>(null)
-const zoneForm = reactive({ name: '', description: '' })
+const zoneForm = reactive({ name: '', description: '', parent_zone_id: '' })
 const zoneError = ref('')
 const savingZone = ref(false)
 
 function openCreateZone() {
   editingZone.value = null
-  Object.assign(zoneForm, { name: '', description: '' })
+  Object.assign(zoneForm, { name: '', description: '', parent_zone_id: '' })
   zoneError.value = ''
   showZoneModal.value = true
 }
 function openEditZone(z: any) {
   editingZone.value = z
-  Object.assign(zoneForm, { name: z.name, description: z.description })
+  Object.assign(zoneForm, { name: z.name, description: z.description, parent_zone_id: z.parent_zone_id || '' })
   zoneError.value = ''
   showZoneModal.value = true
 }
@@ -230,10 +246,11 @@ async function saveZone() {
   savingZone.value = true
   zoneError.value = ''
   try {
+    const payload = { name: zoneForm.name, description: zoneForm.description, parent_zone_id: zoneForm.parent_zone_id || null }
     if (editingZone.value) {
-      await api.put(`/zones/${editingZone.value.id}`, zoneForm)
+      await api.put(`/zones/${editingZone.value.id}`, payload)
     } else {
-      await api.post('/zones', zoneForm)
+      await api.post('/zones', payload)
     }
     closeZoneModal()
     loadZones()
