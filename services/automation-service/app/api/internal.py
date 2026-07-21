@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app._params import ParamNotAllowedError, filter_caller_params, template_code_params
@@ -75,11 +76,11 @@ async def create_run_internal(
 
 class InternalNotificationCreate(BaseModel):
     user_id: str | None = None
-    severity: str = "info"  # info | medium | critical
-    title: str
-    message: str = ""
-    source_type: str = "external"
-    source_id: str | None = None
+    severity: Literal["info", "medium", "critical"] = "info"
+    title: str = Field(max_length=300)
+    message: str = Field(default="", max_length=2000)
+    source_type: str = Field(default="external", max_length=30)
+    source_id: str | None = Field(default=None, max_length=36)
 
 
 @router.post("/internal/notifications", status_code=status.HTTP_201_CREATED)
@@ -87,7 +88,13 @@ async def create_notification_internal(payload: InternalNotificationCreate):
     """PCI DSS Phase B: lets other services raise a real in-app + emailed alert
     without touching mail credentials or notification plumbing themselves — e.g.
     inventory-service's rotation-due sweep, identity-service's security-event
-    alerts (privileged role grants, audit-chain write failures, login spikes)."""
+    alerts (privileged role grants, audit-chain write failures, login spikes).
+
+    Unlike its sibling internal endpoints, this one's content (title/message)
+    renders directly in the caller's notification UI — validated to the same
+    field shapes ZANotification's model enforces (Literal severity, bounded
+    lengths) rather than accepting arbitrary strings, even though the caller
+    is already a trusted service-token holder."""
     from app.runner import create_notification
 
     notif = await create_notification(
