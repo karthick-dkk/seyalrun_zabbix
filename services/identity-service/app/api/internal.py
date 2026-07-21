@@ -74,6 +74,8 @@ class AuditEntry(BaseModel):
     resource_id: str = ""
     details: dict = {}
     ip_address: str = ""
+    session_id: str | None = None
+    result: str | None = None
 
 
 class DispatchAlertRequest(BaseModel):
@@ -117,6 +119,8 @@ async def write_audit(entry: AuditEntry, session: AsyncSession = Depends(get_ses
         resource_id=entry.resource_id,
         details=entry.details,
         ip_address=entry.ip_address,
+        session_id=entry.session_id,
+        result=entry.result,
     )
     return {"ok": True}
 

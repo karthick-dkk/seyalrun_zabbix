@@ -95,6 +95,9 @@ class PlatformSettingsIn(BaseModel):
     session_idle_minutes: int = 30
     session_absolute_hours: int = 8
     log_level: str = "INFO"
+    # PCI DSS Phase A JIT elevation window (see app/sessions.py::elevate) — how long
+    # an admin/superadmin's re-proved-MFA elevation lasts before it must be renewed.
+    elevated_session_minutes: int = 30
 
 
 class ZabbixModuleSettingsIn(BaseModel):
@@ -144,6 +147,7 @@ async def put_platform(
         "rate_limit_window_seconds": max(1, min(payload.rate_limit_window_seconds, 3600)),
         "session_idle_minutes": max(1, min(payload.session_idle_minutes, 1440)),
         "session_absolute_hours": max(1, min(payload.session_absolute_hours, 168)),
+        "elevated_session_minutes": max(5, min(payload.elevated_session_minutes, 240)),
         "log_level": payload.log_level.upper() if payload.log_level.upper() in
             ("DEBUG", "INFO", "WARNING", "ERROR") else "INFO",
     }

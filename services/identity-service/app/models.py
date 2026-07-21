@@ -266,6 +266,13 @@ class ZAAuditLog(Base):
     seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # PCI DSS Phase A structured-schema gap: PCI 10.2 wants user_id/event_type/
+    # timestamp/source_ip/target_resource/result/session_id. All but the last two
+    # already existed (username/action/created_at/ip_address/resource_type+id).
+    # Nullable, not backfilled — each row's hash is fixed at write time, so old
+    # rows simply carry these as None and the chain still verifies (see audit.py).
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    result: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
 
 class ZALoginAttempt(Base):

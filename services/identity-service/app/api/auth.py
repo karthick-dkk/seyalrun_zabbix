@@ -22,7 +22,7 @@ from ..models import ZARole, ZAUser
 from ..plugins.idp.local import LocalIdentityProvider
 from ..plugins.idp.zabbix_sso import ZabbixSSOProvider
 from ..redis_client import redis_client
-from ..sessions import create_session
+from ..sessions import create_session, elevate
 from .._pwpolicy import validate_new_password
 from ..schemas import (
     ChangePasswordRequest,
@@ -712,6 +712,71 @@ async def mfa_verify(
         settings.jwt_secret, algorithm=settings.jwt_algorithm,
     )
     return {"valid": True, "reveal_token": reveal_token}
+
+
+class ElevateVerifyRequest(BaseModel):
+    code: str = ""
+
+
+@router.post("/elevate/request-code")
+async def elevate_request_code(
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """Email-MFA admins need a fresh code before /elevate/verify will accept it —
+    TOTP admins just enter their authenticator's current code. Mirrors
+    /mfa/reveal/request-code exactly, scoped to the "elevate" OTP purpose."""
+    user = await _require_user(session, x_user_id)
+    if user.mfa_method != "email":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="not applicable for this MFA method")
+    await _issue_otp(user, session, "elevate")
+    return {"sent": True}
+
+
+@router.post("/elevate/verify")
+async def elevate_verify(
+    payload: ElevateVerifyRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    """PCI DSS Phase A — time-boxed admin/superadmin JIT elevation (Azure-PIM/
+    sudo-timeout style). Re-proving MFA here unlocks SSH-connect and credential-
+    reveal for actions with no explicit ZAAuthorization grant, for a bounded
+    window (see terminal-service sessions.py and inventory-service
+    credentials.py's elevation fallback checks). Per-user, not per-session —
+    api-gateway reads the resulting Redis key directly (security.py) and
+    forwards it downstream as X-Elevated-Until."""
+    import pyotp
+
+    from .settings import _get_value, _PLATFORM_DEFAULTS, PLATFORM_KEY
+    from ..vault import decrypt
+
+    user = await _require_user(session, x_user_id)
+    roles, _ = await _resolve_roles(session, user.id, user.role_id)
+    if not ({"admin", "superadmin"} & set(roles)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="elevation is only available to admin/superadmin roles")
+    if not user.mfa_method:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="MFA must be enabled to use elevated access — enable it in Security settings")
+
+    if user.mfa_method == "totp":
+        if not user.totp_secret or not pyotp.TOTP(decrypt(user.totp_secret)).verify(payload.code, valid_window=1):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid code")
+    else:
+        await _consume_otp(user.id, payload.code, "elevate")
+
+    platform = {**_PLATFORM_DEFAULTS, **(await _get_value(session, PLATFORM_KEY))}
+    minutes = int(platform.get("elevated_session_minutes", 30))
+    until = await elevate(redis_client, user.id, minutes, reason="mfa_reverify")
+
+    await log_action(
+        session, user_id=user.id, username=user.username, action="auth.elevate",
+        resource_type="user", resource_id=user.id, ip_address=_client_ip(request),
+        details={"minutes": minutes}, result="success",
+    )
+    return {"elevated_until": until, "elevated_minutes": minutes}
 
 
 @router.post("/setup/complete")

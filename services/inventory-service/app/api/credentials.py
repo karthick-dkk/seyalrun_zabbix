@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.elevation import elevation_active
 from libs.pluginbase import discover_plugins, CredentialKind
 
 from .. import audit
@@ -254,6 +255,42 @@ async def list_weak_credentials(session: AsyncSession = Depends(get_session)):
     return [await _credential_out(session, c) for c in result.scalars().all()]
 
 
+async def _credential_authorized_for_reveal(session: AsyncSession, credential_id: str, actor_id: str, settings) -> bool:
+    """PCI DSS Phase A: reveal previously had no PAM gate at all beyond require_admin —
+    any admin could reveal any credential's plaintext with zero za_authorization grant,
+    via a path that never touches the terminal-service gateway. This checks, for every
+    host the credential is linked to, whether the caller's resolved authorization for
+    that host actually covers this credential + the "reveal" action."""
+    import httpx
+    from libs.servicetoken import mint
+
+    links = await session.execute(
+        select(ZACredentialHostLink.host_id).where(ZACredentialHostLink.credential_id == credential_id)
+    )
+    host_ids = [h for (h,) in links.all()]
+    if not host_ids:
+        return False
+    token = mint("inventory-service", "identity-service", settings.service_jwt_secret)
+    async with httpx.AsyncClient(base_url=settings.identity_service_url, timeout=5.0) as client:
+        for host_id in host_ids:
+            try:
+                resp = await client.get(
+                    "/api/v1/internal/authz/resolve",
+                    params={"user_id": actor_id, "host_id": host_id},
+                    headers={"X-Service-Token": token},
+                )
+            except httpx.HTTPError:
+                continue
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            cred_ids = data.get("credential_ids") or ([data["credential_id"]] if data.get("credential_id") else [])
+            actions = data.get("actions") or []
+            if credential_id in cred_ids and (not actions or "reveal" in actions):
+                return True
+    return False
+
+
 @router.get("/credentials/{credential_id}/reveal", response_model=CredentialSecretOut, dependencies=[Depends(require_admin)])
 async def reveal_credential(
     credential_id: str,
@@ -261,11 +298,18 @@ async def reveal_credential(
     reveal_token: str = Header("", alias="X-Reveal-Token"),
     actor_id: str | None = Header(default=None, alias="X-User-Id"),
     actor_name: str | None = Header(default=None, alias="X-User-Name"),
+    actor_role: str = Header(default="user", alias="X-User-Role"),
+    elevated_until: str = Header(default="", alias="X-Elevated-Until"),
 ):
     """MFA-gated secret reveal (Feature 6). Requires a short-lived reveal token minted by
     identity-service /auth/mfa/verify. The token is bound to BOTH the specific credential
     (``cid``) and the user (``sub``) it was minted for, so it cannot be replayed to reveal a
-    different credential or by a different user."""
+    different credential or by a different user.
+
+    PCI DSS Phase A: the reveal token alone used to be sufficient — this also requires a
+    real za_authorization grant covering "reveal" on this credential, same PAM gate SSH
+    access already has, UNLESS the caller is admin/superadmin with an active JIT elevation
+    (see terminal-service sessions.py's identical fallback)."""
     settings = get_settings()
     if not reveal_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="reveal token required")
@@ -286,6 +330,16 @@ async def reveal_credential(
     if cred is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="credential not found")
 
+    elevation_used = False
+    if actor_id and not await _credential_authorized_for_reveal(session, credential_id, actor_id, settings):
+        if actor_role in ("admin", "superadmin") and elevation_active(elevated_until):
+            elevation_used = True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="not authorized to reveal this credential — request access in Admin → Authorizations",
+            )
+
     kind = _kind(cred.secret_type)
     try:
         secret = kind.decode(decrypt(cred.secret_ciphertext))
@@ -295,7 +349,11 @@ async def reveal_credential(
     await audit.log_action(
         user_id=actor_id, username=actor_name or "", action="credential.viewed",
         resource_type="credential", resource_id=cred.id,
-        details={"event_type": "credential_viewed", "name": cred.name},
+        details={
+            "event_type": "elevated_reveal" if elevation_used else "credential_viewed",
+            "name": cred.name, "elevation_used": elevation_used,
+        },
+        result="success",
     )
     return CredentialSecretOut(id=cred.id, username=cred.username, secret_type=cred.secret_type, secret=secret)
 

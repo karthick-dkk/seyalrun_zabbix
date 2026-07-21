@@ -85,6 +85,12 @@ async def proxy(request: Request, path: str, identity: dict) -> Response:
     headers["X-User-Name"] = identity.get("username", "")
     if identity.get("kiosk_host_id"):
         headers["X-Kiosk-Host-Id"] = identity["kiosk_host_id"]
+    # PCI DSS Phase A JIT elevation — unix timestamp the elevated window expires at,
+    # or absent entirely if the user has none active. Downstream services (terminal-
+    # service, inventory-service) treat this as the sole source of truth; it is never
+    # accepted from the inbound request (identity dict is resolved server-side only).
+    if identity.get("elevated_until"):
+        headers["X-Elevated-Until"] = str(identity["elevated_until"])
 
     body = await request.body()
     url = f"{base_url}/api/v1/{path}"
