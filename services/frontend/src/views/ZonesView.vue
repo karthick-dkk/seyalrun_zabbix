@@ -4,7 +4,7 @@
       <div class="page-header">
         <div>
           <div class="page-title">Zones</div>
-          <div class="page-subtitle">Network zones and their SSH gateways — support-role users can edit a zone once they're authorized against a host inside it</div>
+          <div class="page-subtitle">Network zones and their SSH gateways — nest a zone under a parent to build a multi-hop ProxyJump chain</div>
         </div>
       </div>
       <ZonesAdmin />

@@ -21,6 +21,12 @@ class ZAZone(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
+    # Zone nesting — the ProxyJump chain for a host in this zone is this zone's own
+    # gateway plus every ancestor's gateway, root-first. SET NULL (not CASCADE) so
+    # deleting a parent zone detaches its children rather than deleting them.
+    parent_zone_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("za_zones.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     gateways: Mapped[list["ZAGateway"]] = relationship("ZAGateway", back_populates="zone", lazy="select")

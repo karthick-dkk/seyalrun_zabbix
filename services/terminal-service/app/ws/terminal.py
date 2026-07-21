@@ -162,39 +162,45 @@ async def handle_terminal(websocket: WebSocket, session_id: str, terminate_event
             logger.exception("credential fetch failed", extra={"session_id": session_id})
             return
 
-        # Resolve ProxyJump gateway if needed
+        # Resolve the ProxyJump chain, if this host's zone (or any of its ancestor
+        # zones) has a gateway. Each ancestor zone contributes at most one hop, root
+        # first, ending with the target host's own zone — "ssh -J gw1,gw2,...".
         tunnel_conn = None
-        if sess.gateway_id:
+        zone_id = host.get("zone_id")
+        if zone_id:
             try:
-                gw_data = await _inventory_get(f"/internal/gateways/{sess.gateway_id}", settings)
-                gw_host = gw_data.get("host") or gw_data.get("address", "")
-                gw_port = int(gw_data.get("port", 22))
-                gw_cred_id = gw_data.get("credential_id")
-                if gw_cred_id:
-                    gw_cred_data = await _inventory_get(f"/internal/credentials/{gw_cred_id}/secret", settings)
-                    gw_username = gw_cred_data["username"]
-                    gw_password = gw_cred_data["secret"].get("password") if gw_cred_data["secret_type"] == "password" else None
-                    gw_keys = (
-                        [asyncssh.import_private_key(gw_cred_data["secret"]["private_key"])]
-                        if gw_cred_data["secret_type"] == "ssh_key"
-                        else []
+                chain_data = await _inventory_get(f"/internal/zones/{zone_id}/gateway-chain", settings)
+            except Exception:
+                chain_data = {"chain": []}
+            for hop in chain_data.get("chain", []):
+                try:
+                    gw_cred_id = hop.get("credential_id")
+                    if gw_cred_id:
+                        gw_cred_data = await _inventory_get(f"/internal/credentials/{gw_cred_id}/secret", settings)
+                        gw_username = gw_cred_data["username"]
+                        gw_password = gw_cred_data["secret"].get("password") if gw_cred_data["secret_type"] == "password" else None
+                        gw_keys = (
+                            [asyncssh.import_private_key(gw_cred_data["secret"]["private_key"])]
+                            if gw_cred_data["secret_type"] == "ssh_key"
+                            else []
+                        )
+                    else:
+                        gw_username = hop.get("username", "")
+                        gw_password = None
+                        gw_keys = []
+                    tunnel_conn = await asyncssh.connect(
+                        hop["host"],
+                        port=int(hop.get("port", 22)),
+                        username=gw_username,
+                        password=gw_password,
+                        client_keys=gw_keys,
+                        known_hosts=_known_hosts(),
+                        tunnel=tunnel_conn,
                     )
-                else:
-                    gw_username = gw_data.get("username", "")
-                    gw_password = None
-                    gw_keys = []
-                tunnel_conn = await asyncssh.connect(
-                    gw_host,
-                    port=gw_port,
-                    username=gw_username,
-                    password=gw_password,
-                    client_keys=gw_keys,
-                    known_hosts=_known_hosts(),
-                )
-            except Exception as exc:
-                await websocket.send_text(json.dumps({"type": "error", "message": f"gateway connection failed: {exc}"}))
-                await websocket.close(code=4502)
-                return
+                except Exception as exc:
+                    await websocket.send_text(json.dumps({"type": "error", "message": f"gateway '{hop.get('zone_name', hop.get('host'))}' connection failed: {exc}"}))
+                    await websocket.close(code=4502)
+                    return
 
         # Fetch initial command filters (cached per session, refreshed later).
         # IMPORTANT: always set filters_fetched_at to now(), even on failure.

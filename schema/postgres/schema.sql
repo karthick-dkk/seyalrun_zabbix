@@ -168,10 +168,11 @@ ON CONFLICT (id) DO NOTHING;
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS za_zones (
-    id          VARCHAR(36)  PRIMARY KEY,
-    name        VARCHAR(200) NOT NULL UNIQUE,
-    description TEXT         NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+    id             VARCHAR(36)  PRIMARY KEY,
+    name           VARCHAR(200) NOT NULL UNIQUE,
+    description    TEXT         NOT NULL DEFAULT '',
+    parent_zone_id VARCHAR(36)  REFERENCES za_zones(id) ON DELETE SET NULL,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS za_gateways (

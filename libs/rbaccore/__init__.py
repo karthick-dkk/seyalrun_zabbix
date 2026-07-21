@@ -40,7 +40,11 @@ _AUTHZ_BYPASS = frozenset({"superadmin", "admin"})
 
 # Segment groups (upstream path first segment) — every real segment from
 # proxy.SERVICE_ROUTES appears in exactly one group below.
-_INVENTORY = ["hosts", "host-groups", "credentials", "credential-templates", "zones"]
+_INVENTORY = ["hosts", "host-groups", "credentials", "credential-templates"]
+# Zone/gateway management (ProxyJump chain topology) is admin-only — a support
+# user can be authorized against hosts inside a zone without being able to
+# reshape the zone's routing, same tier as _SYSTEM segments.
+_ZONES = ["zones"]
 _AUTOMATION = ["projects", "job-templates", "schedules", "job-runs",
                "secret-management-jobs", "trigger-bindings", "triggers"]
 _SYSTEM = ["log-backend", "settings", "api-tokens", "command-filters",
@@ -59,7 +63,7 @@ BUILTIN_ROLE_PERMS: dict[str, dict] = {
     "admin": {
         "flags": ["reveal", "mfa"],
         "perms": {
-            **_grant(_INVENTORY + _AUTOMATION + _SELF),
+            **_grant(_INVENTORY + _ZONES + _AUTOMATION + _SELF),
             "authorizations": list(ALL_METHODS),
             "audit": ["GET"],
             "users": ["GET", "PUT"],   # edit existing users; cannot create (POST)

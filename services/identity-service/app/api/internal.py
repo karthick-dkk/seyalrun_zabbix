@@ -286,7 +286,30 @@ async def authz_resolve(
     now = datetime.now(timezone.utc)
     result = await session.execute(select(ZAAuthorization).where(ZAAuthorization.enabled.is_(True)))
 
+    # Rank candidates instead of taking the first direct-host match verbatim: a
+    # user is commonly granted SSH via one row (e.g. "ssh action, no specific
+    # credential") and a usable credential via a SEPARATE, broader row (e.g. a
+    # shared "team -> project hosts" authorization). Query result order across
+    # rows is otherwise arbitrary (no ORDER BY), so without ranking, whichever
+    # row the DB happens to return first silently shadows a later row that
+    # would have actually resolved a credential — surfacing as "authorized,
+    # but no credential" even though a valid grant exists. Direct host match
+    # always outranks a host-group-only match; within the same specificity, a
+    # credential-bearing row always outranks a credential-less one.
+    def _rank(authz: ZAAuthorization) -> int:
+        direct = host_id in _authz_hosts(authz)
+        group = bool(_authz_host_groups(authz))
+        has_cred = bool(authz.credential_id or authz.credential_ids)
+        if direct and has_cred:
+            return 0
+        if direct:
+            return 1
+        if group and has_cred:
+            return 2
+        return 3  # group without a credential (only reachable when group is True)
+
     best: ZAAuthorization | None = None
+    best_rank = 4
     for authz in result.scalars().all():
         if authz.date_start and authz.date_start > now:
             continue
@@ -294,12 +317,15 @@ async def authz_resolve(
             continue
         if not _authz_matches_principal(authz, user_id, group_ids):
             continue
-        # Direct host match takes priority over a host-group-only match.
-        if host_id in _authz_hosts(authz):
-            best = authz
-            break
-        if _authz_host_groups(authz) and best is None:
-            best = authz
+        direct = host_id in _authz_hosts(authz)
+        group = bool(_authz_host_groups(authz))
+        if not direct and not group:
+            continue
+        rank = _rank(authz)
+        if rank < best_rank:
+            best, best_rank = authz, rank
+            if rank == 0:
+                break  # direct host match with a credential — can't do better
 
     if best is None:
         return {"credential_id": None, "credential_ids": [], "actions": []}

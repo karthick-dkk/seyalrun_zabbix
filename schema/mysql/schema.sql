@@ -168,10 +168,12 @@ INSERT IGNORE INTO za_roles (id, name, description, permissions) VALUES
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS za_zones (
-    id          VARCHAR(36)  PRIMARY KEY,
-    name        VARCHAR(200) NOT NULL UNIQUE,
-    description TEXT         NOT NULL,
-    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id             VARCHAR(36)  PRIMARY KEY,
+    name           VARCHAR(200) NOT NULL UNIQUE,
+    description    TEXT         NOT NULL,
+    parent_zone_id VARCHAR(36),
+    created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_zone_parent FOREIGN KEY (parent_zone_id) REFERENCES za_zones(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS za_gateways (
