@@ -139,43 +139,99 @@ async def list_authorizations(session: AsyncSession = Depends(get_session)):
     return result.scalars().all()
 
 
-@router.get("/email-action", response_class=HTMLResponse)
-async def authorization_email_action(token: str, session: AsyncSession = Depends(get_session)):
-    """Public (unauthenticated) landing page for the approve/reject links sent
-    by _send_approval_request_emails — see api-gateway's _PUBLIC_PATHS, which
-    is what lets a bare email click reach this without a login session. The
-    token itself (not a cookie/header) is the only credential; it's bound to
-    one specific approver, one specific action, and is burned on first use."""
+async def _validate_email_token(
+    session: AsyncSession, token: str,
+) -> tuple[ZAAuthorizationApprovalToken | None, ZAAuthorization | None, ZAUser | None, HTMLResponse | None]:
+    """Shared read-only validation for both the GET confirm-page and the POST
+    that actually acts. Returns (tok, authz, approver, error_page) — error_page
+    is set (and the other three are None/partial) the moment any check fails,
+    so both call sites just do `if error: return error`. Re-run in full on
+    POST rather than trusting the GET's result — state (another approver
+    deciding first, a role change) can change between the two requests."""
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     result = await session.execute(
         select(ZAAuthorizationApprovalToken).where(ZAAuthorizationApprovalToken.token_hash == token_hash)
     )
     tok = result.scalar_one_or_none()
     if tok is None:
-        return _html_page("Link not found", "This approval link is invalid.")
+        return None, None, None, _html_page("Link not found", "This approval link is invalid.")
     if tok.used_at is not None:
-        return _html_page("Already used", "This approval link has already been used.")
+        return None, None, None, _html_page("Already used", "This approval link has already been used.")
     if tok.expires_at < datetime.now(timezone.utc):
-        return _html_page("Link expired", "This approval link has expired — please review the request in the SeyalRun console.")
+        return None, None, None, _html_page("Link expired", "This approval link has expired — please review the request in the SeyalRun console.")
 
     authz = await session.get(ZAAuthorization, tok.authorization_id)
     if authz is None:
-        return _html_page("Not found", "The related authorization request no longer exists.")
+        return None, None, None, _html_page("Not found", "The related authorization request no longer exists.")
     if authz.status != "pending_approval":
-        return _html_page("Already handled", f"This request is already '{authz.status}' — no action was taken.")
+        return None, None, None, _html_page("Already handled", f"This request is already '{authz.status}' — no action was taken.")
 
     approver = await session.get(ZAUser, tok.approver_user_id)
     if approver is None or not approver.is_active:
-        return _html_page("Not authorized", "This approver account is no longer active.")
+        return None, None, None, _html_page("Not authorized", "This approver account is no longer active.")
     from ..rbacresolve import effective_roles
     from libs.rbaccore import bypasses_authz
     if not bypasses_authz(await effective_roles(session, approver.id)):
-        return _html_page("Not authorized", "This account no longer has approval privileges.")
+        return None, None, None, _html_page("Not authorized", "This account no longer has approval privileges.")
     # Belt-and-suspenders: _approver_candidates already excludes the requester
     # at send time, so this should be unreachable, but self-approval must stay
     # blocked even if roles changed between send and click.
     if approver.id == authz.requested_by:
-        return _html_page("Not allowed", "The requester cannot approve their own authorization.")
+        return None, None, None, _html_page("Not allowed", "The requester cannot approve their own authorization.")
+
+    return tok, authz, approver, None
+
+
+@router.get("/email-action", response_class=HTMLResponse)
+async def authorization_email_action(token: str, session: AsyncSession = Depends(get_session)):
+    """Public (unauthenticated) landing page for the approve/reject links sent
+    by _send_approval_request_emails — see api-gateway's _PUBLIC_PATHS, which
+    is what lets a bare email click reach this without a login session.
+
+    Deliberately side-effect-free: GET must stay safe/idempotent per HTTP
+    semantics, and in practice many mail providers and corporate security
+    gateways (Outlook Safe Links, Proofpoint, etc.) automatically prefetch
+    every URL in an email to scan it — a GET that mutated state would let a
+    scanner silently approve/reject a request before any human ever saw the
+    message. This renders a confirmation page with a same-token POST form
+    instead; only that POST (authorization_email_action_confirm below) burns
+    the token and flips the authorization."""
+    tok, authz, approver, error = await _validate_email_token(session, token)
+    if error is not None:
+        return error
+
+    verb = "Approve" if tok.action == "approve" else "Reject"
+    escaped_name = _html.escape(authz.name)
+    escaped_token = _html.escape(token, quote=True)
+    return HTMLResponse(
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>{verb} request</title>"
+        "<style>body{font-family:system-ui,-apple-system,sans-serif;max-width:480px;"
+        "margin:96px auto;padding:0 24px;color:#1a1a1a}"
+        "h1{font-size:20px;margin-bottom:8px}p{color:#555;line-height:1.5}"
+        "button{margin-top:16px;padding:10px 20px;font-size:14px;border-radius:6px;border:0;"
+        "background:#2563eb;color:#fff;cursor:pointer}</style>"
+        f"</head><body><h1>{verb} this request?</h1>"
+        f"<p>'{escaped_name}' is waiting on your review. Click below to confirm — this "
+        f"page performs no action until you do.</p>"
+        # Token travels in the query string (not a hidden form field) so the POST
+        # endpoint can read it the same way GET does — no request-body/form-data
+        # parsing needed, so no new python-multipart dependency for this alone.
+        f"<form method='post' action='email-action?token={escaped_token}'>"
+        f"<button type='submit'>{verb}</button></form></body></html>"
+    )
+
+
+@router.post("/email-action", response_class=HTMLResponse)
+async def authorization_email_action_confirm(token: str, session: AsyncSession = Depends(get_session)):
+    """The actual state-changing step — only reachable via a POST triggered by
+    a human clicking the confirm button on the GET page above (or replaying an
+    identical POST, which is no more powerful than the button — the token is
+    still single-use). See authorization_email_action's docstring for why this
+    isn't on GET."""
+    tok, authz, approver, error = await _validate_email_token(session, token)
+    if error is not None:
+        return error
 
     tok.used_at = datetime.now(timezone.utc)
     # Burn every other still-pending token for this request (both actions, every
