@@ -59,6 +59,10 @@
               <input v-model.number="platformForm.session_absolute_hours" type="number" min="1" class="fp-input" />
             </div>
           </div>
+          <div class="fp-field" style="margin-top:4px">
+            <label class="fp-label">App Public URL <span class="hint">used to build one-click links in approval emails</span></label>
+            <input v-model="platformForm.app_public_url" class="fp-input" placeholder="https://seyalrun.example.com" />
+          </div>
           <div v-if="platformMsg" class="save-msg" :class="platformErr ? 'err' : 'ok'">{{ platformMsg }}</div>
           <div style="margin-top:12px">
             <button class="btn btn-primary" :disabled="platformSaving" @click="savePlatform">{{ platformSaving ? 'Saving…' : 'Save' }}</button>
@@ -129,6 +133,7 @@ const integrationErr = ref(false)
 const platformForm = reactive({
   rate_limit_requests: 600, rate_limit_window_seconds: 60,
   session_idle_minutes: 30, session_absolute_hours: 8, log_level: 'INFO',
+  app_public_url: '',
 })
 const platformSaving = ref(false)
 const platformMsg = ref('')

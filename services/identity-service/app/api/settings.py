@@ -101,6 +101,12 @@ class PlatformSettingsIn(BaseModel):
     # PCI DSS Phase B (7.2.4) — default expiry applied to an authorization when the
     # creator doesn't set one explicitly (see api/authorizations.py::_apply).
     authorization_default_ttl_days: int = 90
+    # Base URL (scheme + host, no trailing slash) used to build clickable links in
+    # outbound email, e.g. one-click authorization approval (see
+    # api/authorizations.py::_send_approval_request_emails). Empty by default — no
+    # safe default exists across deployments, and an empty value degrades
+    # gracefully to a console-only instruction rather than a broken link.
+    app_public_url: str = ""
 
 
 class ZabbixModuleSettingsIn(BaseModel):

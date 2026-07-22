@@ -1,22 +1,130 @@
 from __future__ import annotations
 
+import hashlib
+import html as _html
+import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_action
 from ..database import get_session
 from ..deps import require_admin, require_service_token
-from ..models import ZAAuthorization
+from ..models import ZAAuthorization, ZAAuthorizationApprovalToken, ZAUser
 from ..schemas import AuthorizationCreate, AuthorizationOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/authorizations",
     tags=["authorizations"],
     dependencies=[Depends(require_service_token)],
 )
+
+_EMAIL_TOKEN_LIFETIME_DAYS = 7
+
+
+def _html_page(title: str, message: str) -> HTMLResponse:
+    # Unlike JSON responses (auto-escaped by the SPA's templating), this is raw
+    # HTML rendered directly by the clicking browser — admin-set text (authz.name)
+    # flows into `message` via authorization_email_action, so it must be escaped
+    # here rather than trusted the way in-app admin content elsewhere is.
+    title = _html.escape(title)
+    message = _html.escape(message)
+    return HTMLResponse(
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>{title}</title>"
+        "<style>body{font-family:system-ui,-apple-system,sans-serif;max-width:480px;"
+        "margin:96px auto;padding:0 24px;color:#1a1a1a}"
+        "h1{font-size:20px;margin-bottom:8px}p{color:#555;line-height:1.5}</style>"
+        f"</head><body><h1>{title}</h1><p>{message}</p></body></html>"
+    )
+
+
+async def _approver_candidates(session: AsyncSession, exclude_user_id: str | None) -> list[ZAUser]:
+    """Every active user whose effective roles bypass the authz gate (i.e. can
+    already call approve_authorization/reject_authorization), excluding the
+    requester — the same population require_admin would let through, resolved
+    up front so email recipients can never be a superset of who could actually
+    act on this via the normal UI."""
+    from ..rbacresolve import effective_roles
+    from libs.rbaccore import bypasses_authz
+
+    result = await session.execute(select(ZAUser).where(ZAUser.is_active.is_(True)))
+    candidates: list[ZAUser] = []
+    for user in result.scalars().all():
+        if user.id == exclude_user_id or not user.email:
+            continue
+        if bypasses_authz(await effective_roles(session, user.id)):
+            candidates.append(user)
+    return candidates
+
+
+async def _send_approval_request_emails(session: AsyncSession, authz: ZAAuthorization) -> None:
+    """Best-effort: mails every eligible approver (other than the requester) a
+    pair of single-use links that approve/reject this specific request without
+    requiring login first. Mirrors dispatch_alert's discipline (internal.py) —
+    a broken/unconfigured mail setup must never surface back to the caller,
+    since the in-app pending_approval state already exists independently."""
+    from .settings import _get_value, _PLATFORM_DEFAULTS, PLATFORM_KEY
+
+    try:
+        recipients = await _approver_candidates(session, authz.requested_by)
+        if not recipients:
+            return
+
+        platform = {**_PLATFORM_DEFAULTS, **(await _get_value(session, PLATFORM_KEY))}
+        base_url = (platform.get("app_public_url") or "").rstrip("/")
+
+        expires_at = datetime.now(timezone.utc) + timedelta(days=_EMAIL_TOKEN_LIFETIME_DAYS)
+        links_by_user: dict[str, dict[str, str]] = {}
+        new_tokens = []
+        for user in recipients:
+            links_by_user[user.id] = {}
+            for action in ("approve", "reject"):
+                raw_token = secrets.token_urlsafe(32)
+                new_tokens.append(ZAAuthorizationApprovalToken(
+                    authorization_id=authz.id, approver_user_id=user.id,
+                    action=action, token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+                    expires_at=expires_at,
+                ))
+                if base_url:
+                    links_by_user[user.id][action] = f"{base_url}/api/v1/authorizations/email-action?token={raw_token}"
+        session.add_all(new_tokens)
+        await session.commit()
+
+        from ..mailer import MailError, send_mail
+
+        for user in recipients:
+            links = links_by_user[user.id]
+            lines = [
+                "A new access authorization is pending your approval:",
+                "",
+                f"  Name: {authz.name}",
+                f"  Hosts: {', '.join(authz.host_ids or []) or '(none)'}",
+                f"  Actions: {', '.join(authz.actions or []) or '(none)'}",
+                f"  Expires if approved: {authz.date_expired.isoformat() if authz.date_expired else 'n/a'}",
+                "",
+            ]
+            if links.get("approve") and links.get("reject"):
+                lines += [f"Approve: {links['approve']}", f"Reject: {links['reject']}", ""]
+            else:
+                lines += [
+                    "Set 'App Public URL' in Platform Settings to enable one-click approval "
+                    "links by email. In the meantime, review this request in the SeyalRun "
+                    "console under Authorizations.", "",
+                ]
+            lines.append(f"This link expires in {_EMAIL_TOKEN_LIFETIME_DAYS} days and can only be used once.")
+            try:
+                await send_mail(session, user.email, f"Approval needed: {authz.name}", "\n".join(lines))
+            except MailError as exc:
+                logger.warning("approval email send failed", extra={"authz_id": authz.id, "to": user.email, "error": str(exc)})
+    except Exception:
+        logger.exception("approval email dispatch failed", extra={"authz_id": authz.id})
 
 
 async def _default_ttl_days(session: AsyncSession) -> int:
@@ -29,6 +137,76 @@ async def _default_ttl_days(session: AsyncSession) -> int:
 async def list_authorizations(session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(ZAAuthorization))
     return result.scalars().all()
+
+
+@router.get("/email-action", response_class=HTMLResponse)
+async def authorization_email_action(token: str, session: AsyncSession = Depends(get_session)):
+    """Public (unauthenticated) landing page for the approve/reject links sent
+    by _send_approval_request_emails — see api-gateway's _PUBLIC_PATHS, which
+    is what lets a bare email click reach this without a login session. The
+    token itself (not a cookie/header) is the only credential; it's bound to
+    one specific approver, one specific action, and is burned on first use."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    result = await session.execute(
+        select(ZAAuthorizationApprovalToken).where(ZAAuthorizationApprovalToken.token_hash == token_hash)
+    )
+    tok = result.scalar_one_or_none()
+    if tok is None:
+        return _html_page("Link not found", "This approval link is invalid.")
+    if tok.used_at is not None:
+        return _html_page("Already used", "This approval link has already been used.")
+    if tok.expires_at < datetime.now(timezone.utc):
+        return _html_page("Link expired", "This approval link has expired — please review the request in the SeyalRun console.")
+
+    authz = await session.get(ZAAuthorization, tok.authorization_id)
+    if authz is None:
+        return _html_page("Not found", "The related authorization request no longer exists.")
+    if authz.status != "pending_approval":
+        return _html_page("Already handled", f"This request is already '{authz.status}' — no action was taken.")
+
+    approver = await session.get(ZAUser, tok.approver_user_id)
+    if approver is None or not approver.is_active:
+        return _html_page("Not authorized", "This approver account is no longer active.")
+    from ..rbacresolve import effective_roles
+    from libs.rbaccore import bypasses_authz
+    if not bypasses_authz(await effective_roles(session, approver.id)):
+        return _html_page("Not authorized", "This account no longer has approval privileges.")
+    # Belt-and-suspenders: _approver_candidates already excludes the requester
+    # at send time, so this should be unreachable, but self-approval must stay
+    # blocked even if roles changed between send and click.
+    if approver.id == authz.requested_by:
+        return _html_page("Not allowed", "The requester cannot approve their own authorization.")
+
+    tok.used_at = datetime.now(timezone.utc)
+    # Burn every other still-pending token for this request (both actions, every
+    # recipient) so a stale email link can't act on a request someone already decided.
+    others = await session.execute(
+        select(ZAAuthorizationApprovalToken).where(
+            ZAAuthorizationApprovalToken.authorization_id == authz.id,
+            ZAAuthorizationApprovalToken.id != tok.id,
+            ZAAuthorizationApprovalToken.used_at.is_(None),
+        )
+    )
+    for other in others.scalars().all():
+        other.used_at = tok.used_at
+
+    if tok.action == "approve":
+        authz.status, authz.enabled = "active", True
+    else:
+        authz.status, authz.enabled = "rejected", False
+    authz.approved_by = approver.id
+    authz.approved_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    await log_action(
+        session, user_id=approver.id, username=approver.username,
+        action=f"authorization.{tok.action}_via_email",
+        resource_type="authorization", resource_id=authz.id,
+        details={"requested_by": authz.requested_by}, result="success",
+    )
+
+    verb = "approved" if tok.action == "approve" else "rejected"
+    return _html_page(f"Request {verb}", f"'{authz.name}' has been {verb}. You can close this window.")
 
 
 def _merge(arr: list[str], scalar: str | None) -> list[str]:
@@ -100,6 +278,7 @@ async def create_authorization(
         session, user_id=actor_id, username=actor_name or "", action="authorization.create",
         resource_type="authorization", resource_id=authz.id, details={"name": authz.name},
     )
+    await _send_approval_request_emails(session, authz)
     return authz
 
 
@@ -130,6 +309,7 @@ async def update_authorization(
         session, user_id=actor_id, username=actor_name or "", action="authorization.update",
         resource_type="authorization", resource_id=authz.id,
     )
+    await _send_approval_request_emails(session, authz)
     return authz
 
 

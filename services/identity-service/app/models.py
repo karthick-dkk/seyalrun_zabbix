@@ -199,6 +199,29 @@ class ZAAuthorization(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ZAAuthorizationApprovalToken(Base):
+    """Single-use, per-recipient magic-link tokens for approving/rejecting a
+    pending ZAAuthorization by email, without requiring the approver to log in
+    first. Only the sha256 hash of the raw token is stored (same discipline as
+    ZAApiToken) — the raw value exists only in the emailed URL and the moment
+    it's presented back to GET /authorizations/email-action. One row per
+    (authorization, eligible approver, action) — approver_user_id is fixed at
+    send time, so a click can only ever record that specific admin/superadmin
+    as the approver (never an anonymous "email" actor), preserving both the
+    audit trail and the self-approval block."""
+
+    __tablename__ = "za_authz_approval_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    authorization_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_authorizations.id", ondelete="CASCADE"), nullable=False)
+    approver_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_users.id", ondelete="CASCADE"), nullable=False)
+    action: Mapped[str] = mapped_column(String(10), nullable=False)  # "approve" | "reject"
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ZACommandGroup(Base):
     __tablename__ = "za_command_groups"
 
