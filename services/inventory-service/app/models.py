@@ -73,6 +73,11 @@ class ZAHost(Base):
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_ping_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # PCI DSS Phase D — production-host gating: automation-service forces any job
+    # run targeting a production host through the approval flow (Phase B's
+    # ZAJobTemplate.requires_approval path), regardless of the template's own
+    # setting. See services/automation-service/app/api/job_templates.py::run_template.
+    is_production: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     zone: Mapped[ZAZone | None] = relationship("ZAZone", back_populates="hosts")

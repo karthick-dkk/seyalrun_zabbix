@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import signal
 import stat
@@ -15,6 +16,47 @@ from typing import Callable
 import yaml
 
 from libs.pluginbase import ActionExecutor, RunRequest, RunResult
+
+_TASK_RE = re.compile(r"^TASK \[(.*)\] \*+$")
+_RESULT_RE = re.compile(r"^(changed|ok|failed|fatal|skipping): \[([^\]\s]+)")
+
+
+class _DiffCollector:
+    """Parses --check --diff output into {host: [{"task": ..., "diff": ...}]},
+    for PCI DSS Phase D's change-control diff_summary. Ansible's default
+    callback prints a task's diff block (the "--- before"/"+++ after"/"@@"
+    unified-diff text) immediately before the per-host result line
+    ("changed: [host]") for that same task — so a diff block is buffered
+    until the following result line reveals which host it belongs to."""
+
+    def __init__(self) -> None:
+        self._current_task = ""
+        self._buffer: list[str] = []
+        self._in_diff = False
+        self.by_host: dict[str, list[dict]] = {}
+
+    def feed(self, line: str) -> None:
+        task_match = _TASK_RE.match(line)
+        if task_match:
+            self._current_task = task_match.group(1)
+            self._buffer = []
+            self._in_diff = False
+            return
+        if line.startswith("---") and "before" in line:
+            self._in_diff = True
+            self._buffer = [line]
+            return
+        if self._in_diff:
+            result_match = _RESULT_RE.match(line)
+            if result_match:
+                host = result_match.group(2)
+                diff_text = "\n".join(self._buffer).strip()
+                if diff_text:
+                    self.by_host.setdefault(host, []).append({"task": self._current_task, "diff": diff_text})
+                self._buffer = []
+                self._in_diff = False
+                return
+            self._buffer.append(line)
 
 
 def _kill_process_group(pid: int, sig: int) -> None:
@@ -365,9 +407,13 @@ async def run_ansible_playbook(
         finally:
             if read_fd is not None:
                 os.close(read_fd)  # child holds its own dup after exec; drop ours either way
+        diff_collector = _DiffCollector() if dry_run else None
         try:
             async for line in proc.stdout:
-                await publish_line(line.decode().rstrip())
+                text = line.decode().rstrip()
+                await publish_line(text)
+                if diff_collector is not None:
+                    diff_collector.feed(text)
             await proc.wait()
         except asyncio.CancelledError:
             # runner.py's asyncio.wait_for(...) timeout cancels us right here (mid
@@ -386,4 +432,5 @@ async def run_ansible_playbook(
             if agent_proc:
                 _kill_process_group(agent_proc.pid, signal.SIGTERM)
         ok = proc.returncode == 0
-        return RunResult(ok=ok, output="", exit_code=proc.returncode)
+        details = {"diff_summary": diff_collector.by_host} if diff_collector is not None and diff_collector.by_host else {}
+        return RunResult(ok=ok, output="", exit_code=proc.returncode, details=details)

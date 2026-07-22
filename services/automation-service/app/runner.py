@@ -145,6 +145,7 @@ async def execute(
     total_attempts = max(1, retry_count + 1)
     exit_code = None
     final_status = "error"
+    diff_summary: dict | None = None
     for attempt in range(1, total_attempts + 1):
         if attempt > 1:
             await publish_line(f"=== attempt {attempt}/{total_attempts} ===")
@@ -159,6 +160,8 @@ async def execute(
             final_status = "success" if result.ok else "failed"
             if result.output:
                 await publish_line(result.output)
+            if result.details.get("diff_summary"):
+                diff_summary = result.details["diff_summary"]
         except asyncio.TimeoutError:
             final_status = "error"
             await publish_line(f"[error] job timed out after {effective_timeout}s")
@@ -181,6 +184,8 @@ async def execute(
             run.status = final_status
             run.exit_code = exit_code
             run.ended_at = datetime.now(timezone.utc)
+            if diff_summary:
+                run.diff_summary = diff_summary
             await session.commit()
 
     done_msg = json.dumps({"type": "done", "status": final_status, "exit_code": exit_code})
