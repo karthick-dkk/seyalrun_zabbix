@@ -187,7 +187,6 @@ class AuthorizationCreate(BaseModel):
     actions: list[str] = Field(default_factory=lambda: ["ssh"])
     date_start: datetime | None = None
     date_expired: datetime | None = None
-    enabled: bool = True
 
 
 class AuthorizationOut(AuthorizationCreate):
@@ -196,6 +195,14 @@ class AuthorizationOut(AuthorizationCreate):
     id: str
     created_at: datetime
     # Server-controlled — never accepted as client input (see AuthorizationCreate).
+    # enabled in particular used to be a create/update input field; PCI DSS Phase B
+    # made it exclusively approval-lifecycle-controlled (_require_approval/approve/
+    # reject in api/authorizations.py). Moved here rather than left on
+    # AuthorizationCreate, where _apply() silently ignored it — an old caller that
+    # still sends `enabled` in a create/update body now gets the same (documented,
+    # consistent-with-every-other-unknown-field) drop as any other unrecognized
+    # field, rather than a field that looks meaningful but silently does nothing.
+    enabled: bool = True
     status: str = "pending_approval"
     requested_by: str | None = None
     approved_by: str | None = None

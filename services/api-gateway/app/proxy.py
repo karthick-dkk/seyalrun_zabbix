@@ -24,6 +24,21 @@ _HOP_BY_HOP = {
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
 
+# Every trust/identity header this gateway itself sets on the way out. Stripped
+# from the CLIENT's inbound headers unconditionally (not just overwritten) —
+# proxy() below only assigns some of these conditionally (X-Elevated-Until,
+# X-User-Scopes, X-Kiosk-Host-Id are only set when the resolved identity
+# actually carries that value), so without this strip a caller could plant a
+# forged value that survives untouched whenever the condition is false (e.g. a
+# non-elevated admin forging X-Elevated-Until to bypass the JIT-elevation
+# gate, or a session-cookie caller forging X-User-Scopes to pass a scoped-PAT
+# check). Downstream services must only ever trust these coming from
+# api-gateway, never from the original client.
+_IDENTITY_HEADERS = {
+    "x-service-token", "x-user-id", "x-user-role", "x-user-real-role",
+    "x-user-name", "x-kiosk-host-id", "x-user-scopes", "x-elevated-until",
+}
+
 # First path segment after /api/v1/ -> (settings attr for upstream base URL, service-token audience)
 SERVICE_ROUTES: dict[str, tuple[str, str]] = {
     "auth": ("identity_service_url", "identity-service"),
@@ -62,7 +77,10 @@ from .http import client as _client  # shared pooled client (closed by app lifes
 
 
 def _filtered_headers(headers) -> dict:
-    return {key: value for key, value in headers.items() if key.lower() not in _HOP_BY_HOP}
+    return {
+        key: value for key, value in headers.items()
+        if key.lower() not in _HOP_BY_HOP and key.lower() not in _IDENTITY_HEADERS
+    }
 
 
 async def proxy(request: Request, path: str, identity: dict) -> Response:

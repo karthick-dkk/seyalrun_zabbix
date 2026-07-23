@@ -77,4 +77,9 @@ async def handle_spectate(websocket: WebSocket, session_id: str, spectators: dic
             subs.remove(websocket)
         except ValueError:
             pass
+        # Drop the dict entry once its subscriber list is empty — otherwise every
+        # session_id ever spectated leaves a permanent empty-list entry for the
+        # life of the process, growing unboundedly on a busy PAM system.
+        if not subs:
+            spectators.pop(session_id, None)
         logger.info("spectator left", extra={"session_id": session_id, "spectator_user_id": user_id})

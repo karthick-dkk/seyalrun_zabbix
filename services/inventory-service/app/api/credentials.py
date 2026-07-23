@@ -418,11 +418,14 @@ async def update_credential_secret(
     kind = _kind(cred.secret_type)
     kind.validate(payload.secret)
 
-    # Archive the prior ciphertext before overwriting (Feature 10 history).
+    # Archive the prior ciphertext (and its wrapped_dek, if envelope-encrypted —
+    # cred.wrapped_dek is about to be overwritten below, and it's the only key
+    # that can ever unwrap this archived ciphertext again) before overwriting.
     if cred.secret_ciphertext:
         session.add(ZACredentialHistory(
             credential_id=cred.id,
             secret_ciphertext=cred.secret_ciphertext,
+            wrapped_dek=cred.wrapped_dek,
             rotated_by=actor_id or None,
         ))
 

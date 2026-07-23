@@ -11,38 +11,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.servicetoken import mint
-
 from app._params import ParamNotAllowedError, filter_caller_params, template_code_params
-from app.config import get_settings
+from app._production_gate import any_production_hosts as _any_production_hosts
 from app.database import get_session
 from app.deps import require_service_token, get_user_id, get_user_role
 from app.models import ZAJobRun, ZAJobTemplate
 
 router = APIRouter(dependencies=[Depends(require_service_token)])
-
-
-async def _any_production_hosts(host_ids: list[str]) -> bool:
-    """PCI DSS Phase D — production-host gating: checks inventory-service for
-    any target host tagged is_production, so run_template can force the
-    approval flow regardless of the template's own requires_approval setting."""
-    if not host_ids:
-        return False
-    settings = get_settings()
-    headers = {
-        "X-Service-Token": mint("automation-service", "inventory-service", settings.service_jwt_secret),
-        "X-User-Role": "admin",
-    }
-    try:
-        async with httpx.AsyncClient(base_url=settings.inventory_service_url, timeout=10) as client:
-            r = await client.post("/api/v1/internal/hosts/check-production", json=host_ids, headers=headers)
-        if r.status_code >= 400:
-            # Fail closed: an unreachable/erroring inventory-service must not silently
-            # skip the production gate — treat as "can't confirm safe" rather than "safe".
-            return True
-        return bool(r.json().get("production_host_ids"))
-    except httpx.HTTPError:
-        return True
 
 
 class TemplateCreate(BaseModel):

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app._params import ParamNotAllowedError, filter_caller_params, template_code_params
+from app._production_gate import any_production_hosts
 from app.database import get_session
 from app.deps import require_service_token
 from app.models import ZAJobRun, ZAJobTemplate
@@ -45,16 +46,23 @@ async def create_run_internal(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     params = {**tmpl.default_params, **caller_params, **template_code_params(tmpl)}
 
+    # PCI DSS Phase D — production is gated regardless of trigger mechanism; a
+    # Zabbix-triggered run targeting a production host is not exempt just
+    # because a human didn't click "Run". See app/_production_gate.py.
+    force_approval = await any_production_hosts(target_host_ids)
     run = ZAJobRun(
         id=run_id,
         job_template_id=payload.job_template_id,
         triggered_by=payload.triggered_by,
-        status="pending",
+        status="pending_approval" if force_approval else "pending",
         params=params,
         output_lines=[],
     )
     session.add(run)
     await session.commit()
+
+    if force_approval:
+        return {"run_id": run_id, "status": "pending_approval"}
 
     executors = getattr(request.app.state, "executors", {})
     executor = executors.get(tmpl.action_type)

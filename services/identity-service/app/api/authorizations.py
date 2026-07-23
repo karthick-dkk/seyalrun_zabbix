@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html as _html
 import logging
@@ -50,18 +51,17 @@ async def _approver_candidates(session: AsyncSession, exclude_user_id: str | Non
     already call approve_authorization/reject_authorization), excluding the
     requester — the same population require_admin would let through, resolved
     up front so email recipients can never be a superset of who could actually
-    act on this via the normal UI."""
-    from ..rbacresolve import effective_roles
-    from libs.rbaccore import bypasses_authz
+    act on this via the normal UI. Uses the bulk role resolver (2 queries total)
+    rather than looping effective_roles() per active user (1+2N queries) —
+    this runs on every authorization create/update."""
+    from ..rbacresolve import users_with_bypass_role
 
+    bypass_user_ids = await users_with_bypass_role(session)
     result = await session.execute(select(ZAUser).where(ZAUser.is_active.is_(True)))
-    candidates: list[ZAUser] = []
-    for user in result.scalars().all():
-        if user.id == exclude_user_id or not user.email:
-            continue
-        if bypasses_authz(await effective_roles(session, user.id)):
-            candidates.append(user)
-    return candidates
+    return [
+        user for user in result.scalars().all()
+        if user.id != exclude_user_id and user.email and user.id in bypass_user_ids
+    ]
 
 
 async def _send_approval_request_emails(session: AsyncSession, authz: ZAAuthorization) -> None:
@@ -97,9 +97,15 @@ async def _send_approval_request_emails(session: AsyncSession, authz: ZAAuthoriz
         session.add_all(new_tokens)
         await session.commit()
 
-        from ..mailer import MailError, send_mail
+        from ..mailer import MailError, get_mail_settings, send_mail_with_settings
 
-        for user in recipients:
+        # Resolve mail settings once (the only step that touches `session`), then
+        # fire every recipient's send concurrently — send_mail_with_settings never
+        # touches `session`, so this is safe. Serially, N recipients meant N full
+        # SMTP TCP+TLS+AUTH handshakes back-to-back inside this request handler.
+        mail_cfg = await get_mail_settings(session)
+
+        async def _send_one(user) -> None:
             links = links_by_user[user.id]
             lines = [
                 "A new access authorization is pending your approval:",
@@ -120,9 +126,11 @@ async def _send_approval_request_emails(session: AsyncSession, authz: ZAAuthoriz
                 ]
             lines.append(f"This link expires in {_EMAIL_TOKEN_LIFETIME_DAYS} days and can only be used once.")
             try:
-                await send_mail(session, user.email, f"Approval needed: {authz.name}", "\n".join(lines))
+                await send_mail_with_settings(mail_cfg, user.email, f"Approval needed: {authz.name}", "\n".join(lines))
             except MailError as exc:
                 logger.warning("approval email send failed", extra={"authz_id": authz.id, "to": user.email, "error": str(exc)})
+
+        await asyncio.gather(*(_send_one(user) for user in recipients))
     except Exception:
         logger.exception("approval email dispatch failed", extra={"authz_id": authz.id})
 
@@ -270,9 +278,20 @@ def _merge(arr: list[str], scalar: str | None) -> list[str]:
     return out
 
 
-def _apply(authz: ZAAuthorization, payload: AuthorizationCreate, default_ttl_days: int) -> None:
-    """Fold legacy scalars + arrays into the many-to-many arrays, keeping the legacy
-    scalar columns populated (first element) for back-compat readers."""
+def _apply_and_require_reapproval(
+    authz: ZAAuthorization, payload: AuthorizationCreate, default_ttl_days: int, actor_id: str | None,
+) -> None:
+    """Fold legacy scalars + arrays into the many-to-many arrays (keeping the legacy
+    scalar columns populated — first element — for back-compat readers), and reset
+    the approval lifecycle in the SAME function rather than a separate one a caller
+    could forget to invoke. PCI DSS Phase B segregation of duties: every create/edit
+    is inert until a DIFFERENT admin/superadmin approves it (see approve_authorization)
+    — "enabled" is the one flag every resolver already checks, so this reset is the
+    sole enforcement point; nothing downstream needed to change. Deliberately NOT
+    split into two functions (field-apply + approval-reset) — a prior version was,
+    and every call site happened to call both in sequence, but nothing enforced that
+    coupling; a future call site (bulk import, internal sync) could have called just
+    the field-apply half and silently reactivated a grant with no re-approval."""
     users = _merge(payload.user_ids, payload.user_id)
     ugroups = _merge(payload.user_group_ids, payload.user_group_id)
     hosts = _merge(payload.host_ids, payload.host_id)
@@ -299,12 +318,6 @@ def _apply(authz: ZAAuthorization, payload: AuthorizationCreate, default_ttl_day
     # access gap auditors flag — default one in rather than leaving it open-ended.
     authz.date_expired = payload.date_expired or (datetime.now(timezone.utc) + timedelta(days=default_ttl_days))
 
-
-def _require_approval(authz: ZAAuthorization, actor_id: str | None) -> None:
-    """PCI DSS Phase B segregation of duties: every create/edit is inert until a
-    DIFFERENT admin/superadmin approves it (see approve_authorization) — "enabled"
-    is the one flag every resolver already checks, so this is the sole enforcement
-    point; nothing downstream needed to change."""
     authz.status = "pending_approval"
     authz.enabled = False
     authz.requested_by = actor_id
@@ -324,8 +337,7 @@ async def create_authorization(
     if not actor_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user identity required")
     authz = ZAAuthorization()
-    _apply(authz, payload, await _default_ttl_days(session))
-    _require_approval(authz, actor_id)
+    _apply_and_require_reapproval(authz, payload, await _default_ttl_days(session), actor_id)
     session.add(authz)
     await session.commit()
     await session.refresh(authz)
@@ -353,10 +365,9 @@ async def update_authorization(
     if authz is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="authorization not found")
 
-    _apply(authz, payload, await _default_ttl_days(session))
     # Any edit re-opens approval — otherwise a trivially-approved grant could be
     # silently widened afterward with no second reviewer ever seeing the real change.
-    _require_approval(authz, actor_id)
+    _apply_and_require_reapproval(authz, payload, await _default_ttl_days(session), actor_id)
 
     await session.commit()
     await session.refresh(authz)
@@ -417,6 +428,12 @@ async def reject_authorization(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="authorization not found")
     if authz.status != "pending_approval":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"authorization is {authz.status}, not pending approval")
+    # Same segregation-of-duties rule as approve_authorization: a self-reject would
+    # let the requester dodge scrutiny by rejecting their own submission the moment
+    # a reviewer starts looking at it, then resubmitting a modified version — a
+    # different admin must be the one to decide, either way.
+    if actor_id == authz.requested_by:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="the requester cannot reject their own authorization")
 
     authz.status = "rejected"
     authz.enabled = False

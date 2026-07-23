@@ -167,6 +167,13 @@ class ZACredentialHistory(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
     credential_id: Mapped[str] = mapped_column(String(36), ForeignKey("za_credentials.id", ondelete="CASCADE"), nullable=False)
     secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    # Must be archived alongside secret_ciphertext whenever the row it's copied
+    # from used envelope encryption (ZACredential.wrapped_dek set) — otherwise
+    # the live row's wrapped_dek gets overwritten on the same rotation that
+    # creates this history row, and the archived ciphertext becomes permanently
+    # undecryptable (no DEK anywhere can unwrap it again). Null for rows copied
+    # from a pre-Phase-C credential still on the legacy single-KEK scheme.
+    wrapped_dek: Mapped[str | None] = mapped_column(Text, nullable=True)
     rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     rotated_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
 

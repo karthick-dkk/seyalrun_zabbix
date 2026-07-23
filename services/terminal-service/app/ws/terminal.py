@@ -63,11 +63,16 @@ class TeeWebSocket:
             return
         if not (isinstance(frame, dict) and frame.get("type") == "output"):
             return
-        for spectator in list(subs):
+
+        async def _send(ws) -> None:
             try:
-                await spectator.send_text(data)
+                await ws.send_text(data)
             except Exception:
                 pass
+
+        # Concurrent, not sequential — a slow/stalled spectator's send must not
+        # delay delivery to every other spectator watching the same session.
+        await asyncio.gather(*(_send(spectator) for spectator in list(subs)))
 
     def __getattr__(self, name):
         return getattr(self._primary, name)
