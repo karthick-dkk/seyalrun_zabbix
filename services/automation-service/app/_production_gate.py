@@ -6,12 +6,15 @@ run, scheduler.py's cron dispatch, internal.py's Zabbix-triggered webhook) so
 "production is always gated" holds regardless of trigger mechanism — a single
 copy in job_templates.py only covered the manual-run path.
 
-Not wired into chain.py's per-step dispatch: a chain step is awaited
-synchronously as part of one continuous run (the chain loop blocks on each
-step's result before starting the next), so a step landing in
-pending_approval would leave the whole chain hanging indefinitely with
-nothing to resume it — a real gap, but one that needs its own suspend/resume
-design for chains rather than reusing this fire-and-forget check.
+chain.py's per-step dispatch is gated differently than the other three: a
+chain step is awaited synchronously as part of one continuous run (the chain
+loop blocks on each step's result before starting the next), so a step
+landing in pending_approval would leave the whole chain hanging indefinitely
+with nothing to resume it. Rather than build a suspend/resume mechanism,
+ChainExecutor.execute() checks every step's target hosts up front and
+refuses to run the WHOLE chain if any step targets production — the human
+must run that specific step individually, through run_template's own
+approval gate, instead.
 """
 
 from __future__ import annotations
